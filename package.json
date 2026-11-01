@@ -15,7 +15,16 @@
   "build": {
     "appId": "fr.livetchat.app",
     "productName": "LiveTchat",
-    "files": ["src/**/*", "package.json"],
-    "win": { "target": "portable" }
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  },
+  "dependencies": {
+    "@achingbrain/nat-port-mapper": "^4.0.5",
+    "ws": "^8.22.1"
   }
 }
