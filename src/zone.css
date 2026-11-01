@@ -1,0 +1,61 @@
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.55);
+  font: 15px "Segoe UI", system-ui, sans-serif;
+  color: #fff;
+  cursor: crosshair;
+  user-select: none;
+}
+
+#rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px dashed #4fc3ff;
+  background: rgba(79, 195, 255, 0.2);
+  cursor: move;
+}
+
+#dims {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-weight: 600;
+  text-shadow: 0 0 3px #000;
+}
+
+#handle {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
+  background: #4fc3ff;
+  border-radius: 3px;
+  cursor: nwse-resize;
+}
+
+#help {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: rgba(20, 20, 20, 0.9);
+  border-radius: 8px;
+  text-align: center;
+  cursor: default;
+}
+
+#help p {
+  margin: 6px 0;
+}
+
+button {
+  font: inherit;
+  padding: 4px 12px;
+  margin: 0 4px;
+  cursor: pointer;
+}

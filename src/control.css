@@ -1,0 +1,105 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f8;
+  --panel: #fff;
+  --text: #1c1c1f;
+  --muted: #666;
+  --accent: #2b7de9;
+  --error: #c62828;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18181b;
+    --panel: #232327;
+    --text: #ececef;
+    --muted: #a0a0a8;
+    --accent: #5aa0ff;
+    --error: #ff7b7b;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px "Segoe UI", system-ui, sans-serif;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+
+h1 small {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+
+section {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  margin: 8px 0;
+}
+
+label.inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+label select,
+label input[type="text"],
+label input[type="number"],
+label input[type="range"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+}
+
+.zone,
+.file {
+  margin: 8px 0;
+}
+
+#zoneLabel,
+#fileName {
+  color: var(--muted);
+}
+
+button {
+  font: inherit;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 18px;
+}
+
+#status {
+  min-height: 1.2em;
+  color: var(--muted);
+}
+
+#status.error {
+  color: var(--error);
+}

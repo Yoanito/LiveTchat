@@ -1,0 +1,21 @@
+{
+  "name": "livetchat",
+  "version": "0.1.0",
+  "description": "Affiche des images et vidéos en overlay sur l'écran de ses amis.",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^44.10.1",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "fr.livetchat.app",
+    "productName": "LiveTchat",
+    "files": ["src/**/*", "package.json"],
+    "win": { "target": "portable" }
+  }
+}

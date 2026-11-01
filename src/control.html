@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'">
+  <title>LiveTchat</title>
+  <link rel="stylesheet" href="control.css">
+</head>
+<body>
+  <h1>LiveTchat <small>prototype overlay</small></h1>
+
+  <section>
+    <h2>Affichage chez moi</h2>
+    <label>Écran
+      <select id="display"></select>
+    </label>
+    <p class="zone">
+      Zone : <span id="zoneLabel"></span><br>
+      <button id="editZone">Définir la zone</button>
+      <button id="fullZone">Plein écran</button>
+    </p>
+    <label class="inline"><input type="checkbox" id="sound"> Son</label>
+    <label>Volume <output id="volumeOut"></output>
+      <input type="range" id="volume" min="0" max="100" step="1">
+    </label>
+    <label>Opacité <output id="opacityOut"></output>
+      <input type="range" id="opacity" min="10" max="100" step="5">
+    </label>
+    <label>Taille max des médias (Mo)
+      <input type="number" id="maxSizeMb" min="1" max="500" step="1">
+    </label>
+  </section>
+
+  <section>
+    <h2>Tester un média</h2>
+    <p class="file">
+      <button id="pick">Choisir une image ou une vidéo</button>
+      <span id="fileName">Aucun fichier</span>
+    </p>
+    <label>Texte (optionnel)
+      <input type="text" id="text" maxlength="200" placeholder="Ton message">
+    </label>
+    <label>Durée d'affichage d'une image (s)
+      <input type="number" id="imageSeconds" min="1" max="30" value="5">
+    </label>
+    <label>Délai avant affichage (s), le temps de revenir en jeu
+      <input type="number" id="delay" min="0" max="60" value="5">
+    </label>
+    <button id="send" class="primary">Afficher</button>
+    <p id="status" role="status"></p>
+  </section>
+
+  <script src="control.js"></script>
+</body>
+</html>
