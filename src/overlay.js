@@ -3,6 +3,7 @@ const caption = document.getElementById('caption');
 
 // Chaque média reçoit un jeton : un événement en retard d'un ancien média est ignoré.
 let token = 0;
+let mediaId = null; // identifiant donné par le processus principal, renvoyé à la fin
 let timer = null;
 let el = null;
 
@@ -27,8 +28,9 @@ function clear() {
 
 function finish(t) {
   if (t !== token) return;
+  const id = mediaId;
   clear();
-  window.overlay.done();
+  window.overlay.done(id);
 }
 
 // Le média n'est ajouté à la page qu'après lecture de ses dimensions :
@@ -44,6 +46,7 @@ function show(t, media) {
 window.overlay.onMedia((media) => {
   clear();
   const t = token;
+  mediaId = media.id;
   document.body.style.opacity = media.opacity;
 
   if (media.kind === 'image') {

@@ -11,6 +11,8 @@ const MB = 1024 * 1024;
 const settings = require('./settings');
 
 let win = null;
+// La page réseau est chargée et peut recevoir des commandes.
+let ready = false;
 let notify = () => {};
 let player = null;
 
@@ -48,11 +50,33 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+  // Chargée (ou rechargée après un plantage) : on rejoint le salon en cours.
+  win.webContents.on('did-finish-load', () => {
+    ready = true;
+    if (room) sendJoin();
+  });
+  // Page plantée : les envois en cours échouent, les membres réapparaîtront après le rechargement.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error("La connexion réseau s'est arrêtée :", details.reason);
+    ready = false;
+    failPendingSends('La connexion a redémarré, renvoie le média.');
+    if (room) {
+      room.members = [];
+      notifyRoom();
+    }
+    setTimeout(() => win && !win.isDestroyed() && win.webContents.reload(), 1000);
+  });
   win.loadFile(path.join(__dirname, '..', 'net', 'net.html'));
 }
 
+// Une commande envoyée avant la fin du chargement serait perdue : le salon est rejoint au chargement.
 function command(cmd) {
-  if (win && !win.isDestroyed()) win.webContents.send('net:command', cmd);
+  if (ready && win && !win.isDestroyed()) win.webContents.send('net:command', cmd);
+}
+
+function failPendingSends(error) {
+  for (const { resolve } of pendingSends.values()) resolve({ ok: false, error });
+  pendingSends.clear();
 }
 
 function notifyRoom() {
@@ -73,6 +97,16 @@ function profile() {
   return { id: s.clientId, name: myName(), maxSizeMb: s.maxSizeMb, muted: s.muted };
 }
 
+function sendJoin() {
+  command({
+    type: 'join',
+    code: room.code,
+    ...profile(),
+    // Pour les tests : relais Nostr personnalisés, séparés par des virgules.
+    relayUrls: process.env.LIVETCHAT_RELAYS?.split(',').filter(Boolean),
+  });
+}
+
 function join(code) {
   settings.ensureClientId();
   leave();
@@ -82,13 +116,7 @@ function join(code) {
   s.lastCode = code;
   settings.save();
   room = { code, members: [], warning: null };
-  command({
-    type: 'join',
-    code,
-    ...profile(),
-    // Pour les tests : relais Nostr personnalisés, séparés par des virgules.
-    relayUrls: process.env.LIVETCHAT_RELAYS?.split(',').filter(Boolean),
-  });
+  sendJoin();
   notifyRoom();
 }
 
@@ -97,8 +125,7 @@ function leave({ sync = false } = {}) {
   if (!room) return;
   command({ type: 'leave' });
   room = null;
-  for (const { resolve } of pendingSends.values()) resolve({ ok: false, error: 'Salon quitté.' });
-  pendingSends.clear();
+  failPendingSends('Salon quitté.');
   const dir = recvDir;
   recvDir = null;
   if (dir) {
@@ -168,6 +195,7 @@ async function send(file, size, { text, imageSeconds }) {
   const skipped = members.filter((m) => !targets.includes(m)).map((m) => m.name);
   // Personne ne peut le recevoir : inutile de lire le fichier.
   if (targets.length === 0) return { ok: true, delivered: [], failed: [], skipped, shownHere };
+  if (!ready) return { ok: false, error: 'La connexion redémarre, réessaie dans quelques secondes.' };
 
   const requestId = crypto.randomUUID();
   const result = new Promise((resolve) => pendingSends.set(requestId, { resolve }));

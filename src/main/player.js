@@ -17,11 +17,19 @@ let win = null;
 let getSettings = null;
 let onQueueChanged = () => {};
 
-// Chaque élément : { file, url, kind, text, durationMs, onDone? }.
+// Si l'overlay ne répond pas à temps (page plantée ou bloquée), on passe au média suivant.
+const WATCHDOG_MARGIN_MS = 10_000;
+const RELOAD_DELAY_MS = 1000;
+
+// Chaque élément : { id, file, url, kind, text, durationMs, onDone? }.
 // onDone est appelé quand le média a été affiché ou retiré de la file.
 const queue = [];
 let current = null;
+let nextId = 1;
+let watchdog = null;
 let keepOnTopTimer = null;
+// La page overlay est chargée et peut recevoir un média.
+let ready = false;
 
 function createWindow() {
   const s = getSettings();
@@ -51,6 +59,17 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   // Les clics traversent la fenêtre vers ce qui est en dessous.
   win.setIgnoreMouseEvents(true);
+  win.webContents.on('did-finish-load', () => {
+    ready = true;
+    pump();
+  });
+  // Page plantée : le média en cours est abandonné, la page est rechargée et la file reprend.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error("L'overlay s'est arrêté :", details.reason);
+    ready = false;
+    finishCurrent();
+    setTimeout(() => alive() && win.webContents.reload(), RELOAD_DELAY_MS);
+  });
   win.loadFile(path.join(__dirname, '..', 'overlay.html'));
 }
 
@@ -66,7 +85,7 @@ function keepOnTop(active) {
 }
 
 function pump() {
-  if (current || queue.length === 0 || !alive()) return;
+  if (current || !ready || queue.length === 0 || !alive()) return;
   current = queue.shift();
   const s = getSettings();
   win.setBounds(zoneBounds(s.displayId, s.zone));
@@ -74,7 +93,17 @@ function pump() {
   win.showInactive();
   win.setAlwaysOnTop(true, 'screen-saver');
   keepOnTop(true);
+  const limitMs = current.kind === 'image' ? current.durationMs : MAX_VIDEO_SECONDS * 1000;
+  // Pas de réponse à temps : la page est bloquée ou cassée. On l'arrête,
+  // elle est rechargée comme après un plantage et la file reprend.
+  watchdog = setTimeout(() => {
+    console.error("L'overlay ne répond plus, rechargement.");
+    ready = false;
+    finishCurrent();
+    if (alive()) win.webContents.forcefullyCrashRenderer();
+  }, limitMs + WATCHDOG_MARGIN_MS);
   win.webContents.send('overlay:media', {
+    id: current.id,
     url: current.url,
     kind: current.kind,
     text: current.text,
@@ -93,6 +122,8 @@ function finishCurrent() {
   if (!current) return;
   const item = current;
   current = null;
+  clearTimeout(watchdog);
+  watchdog = null;
   keepOnTop(false);
   if (alive()) win.hide();
   item.onDone?.();
@@ -109,6 +140,7 @@ function enqueue(file, { text, imageSeconds, onDone }) {
   }
   const busy = Boolean(current);
   queue.push({
+    id: nextId++,
     file,
     url: pathToFileURL(file).href,
     kind: mediaKind(file),
@@ -132,9 +164,10 @@ function drop(predicate) {
   onQueueChanged(queue.length);
 }
 
-ipcMain.on('overlay:done', (event) => {
+ipcMain.on('overlay:done', (event, id) => {
   if (!alive() || event.sender !== win.webContents) return;
-  finishCurrent();
+  // Fin en retard d'un média déjà abandonné par le minuteur de secours : ignorée.
+  if (current?.id === id) finishCurrent();
 });
 
 function init(deps) {
