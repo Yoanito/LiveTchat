@@ -3,9 +3,14 @@
 import { joinRoom } from 'trystero';
 
 const APP_ID = 'livetchat-v1';
+const MB = 1024 * 1024;
+// Mémoire réservée aux médias en cours de réception, tous amis confondus.
+// Au-delà, les envois suivants attendent leur tour.
+const RECEIVE_BUDGET_BYTES = 256 * MB;
 
 let room = null;
-let me = null; // { id, name, maxSizeMb }
+let me = null; // { id, name, maxSizeMb } : ce que les autres voient de moi
+let muted = new Set(); // identifiants des amis dont je refuse les médias (jamais envoyé)
 const members = new Map(); // peerId -> { id, name, maxSizeMb }
 let hello = null;
 let media = null;
@@ -16,15 +21,16 @@ function publishMembers() {
   emit('members', [...members.values()]);
 }
 
-function join({ code, id, name, maxSizeMb, relayUrls }) {
+function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
   leave();
   me = { id, name, maxSizeMb };
+  muted = new Set(mutedIds);
   room = joinRoom(
     {
       appId: APP_ID,
       // Le code du salon chiffre aussi les échanges passant par les relais.
       password: code,
-      maxReceiveBytes: 512 * 1024 * 1024,
+      maxReceiveBytes: RECEIVE_BUDGET_BYTES,
       ...(relayUrls?.length ? { relayConfig: { urls: relayUrls } } : {}),
     },
     code,
@@ -45,8 +51,12 @@ function join({ code, id, name, maxSizeMb, relayUrls }) {
   };
 
   media = room.makeAction('media');
-  // Chacun refuse les fichiers plus lourds que sa propre limite.
-  media.onReceive = ({ byteLength }) => byteLength <= me.maxSizeMb * 1024 * 1024;
+  // Refusé avant le transfert, sans rien télécharger : envoyeur inconnu ou mis en sourdine,
+  // ou fichier plus lourd que ma limite.
+  media.onReceive = ({ byteLength, peerId }) => {
+    const from = members.get(peerId);
+    return Boolean(from) && !muted.has(from.id) && byteLength <= me.maxSizeMb * MB;
+  };
   media.onMessage = (data, { peerId, metadata }) => {
     const from = members.get(peerId);
     if (!from || !(data instanceof ArrayBuffer || ArrayBuffer.isView(data))) return;
@@ -59,7 +69,7 @@ function join({ code, id, name, maxSizeMb, relayUrls }) {
     });
   };
 
-  room.onPeerJoin = (peerId) => hello.send(me, { target: peerId });
+  room.onPeerJoin = (peerId) => hello.send(me, { target: peerId }).catch(() => {});
   room.onPeerLeave = (peerId) => {
     members.delete(peerId);
     publishMembers();
@@ -80,7 +90,7 @@ async function send({ requestId, bytes, ext, text, imageSeconds }) {
   const targets = [];
   const skipped = [];
   for (const [peerId, member] of members) {
-    if (size <= member.maxSizeMb * 1024 * 1024) targets.push(peerId);
+    if (size <= member.maxSizeMb * MB) targets.push(peerId);
     else skipped.push(member.name);
   }
   if (targets.length === 0) {
@@ -94,12 +104,18 @@ async function send({ requestId, bytes, ext, text, imageSeconds }) {
   }
 }
 
+// Pseudo ou limite changés : les autres membres sont prévenus. Les mutes restent locaux.
+function updateProfile({ name, maxSizeMb, muted: mutedIds }) {
+  if (!me) return;
+  muted = new Set(mutedIds);
+  if (name === me.name && maxSizeMb === me.maxSizeMb) return;
+  me = { ...me, name, maxSizeMb };
+  if (room) hello.send(me).catch(() => {});
+}
+
 window.net.onCommand((cmd) => {
   if (cmd.type === 'join') join(cmd);
   else if (cmd.type === 'leave') leave();
   else if (cmd.type === 'send') send(cmd);
-  else if (cmd.type === 'limit' && me) {
-    me.maxSizeMb = cmd.maxSizeMb;
-    if (room) hello.send(me);
-  }
+  else if (cmd.type === 'profile') updateProfile(cmd);
 });

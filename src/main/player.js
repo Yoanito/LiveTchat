@@ -2,19 +2,26 @@
 const { BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { MAX_TEXT_LENGTH } = require('../protocol');
+const {
+  MAX_TEXT_LENGTH,
+  MAX_QUEUE,
+  MAX_IMAGE_PIXELS,
+  MAX_VIDEO_PIXELS,
+  MAX_VIDEO_SECONDS,
+} = require('../protocol');
 const { clamp } = require('./util');
 const { mediaKind } = require('./files');
 const { zoneBounds } = require('./displays');
-
-const MAX_VIDEO_MS = 30_000;
 
 let win = null;
 let getSettings = null;
 let onQueueChanged = () => {};
 
+// Chaque élément : { file, url, kind, text, durationMs, onDone? }.
+// onDone est appelé quand le média a été affiché ou retiré de la file.
 const queue = [];
-let playing = false;
+let current = null;
+let keepOnTopTimer = null;
 
 function createWindow() {
   const s = getSettings();
@@ -47,17 +54,34 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'overlay.html'));
 }
 
+const alive = () => win && !win.isDestroyed();
+
+// Certains jeux ou outils (Xbox Game Bar…) repassent au premier plan :
+// on réaffirme le « toujours au-dessus » chaque seconde, seulement pendant l'affichage.
+function keepOnTop(active) {
+  clearInterval(keepOnTopTimer);
+  keepOnTopTimer = active
+    ? setInterval(() => alive() && win.setAlwaysOnTop(true, 'screen-saver'), 1000)
+    : null;
+}
+
 function pump() {
-  if (playing || queue.length === 0 || !win || win.isDestroyed()) return;
-  const item = queue.shift();
+  if (current || queue.length === 0 || !alive()) return;
+  current = queue.shift();
   const s = getSettings();
-  playing = true;
   win.setBounds(zoneBounds(s.displayId, s.zone));
   win.setIgnoreMouseEvents(true);
   win.showInactive();
   win.setAlwaysOnTop(true, 'screen-saver');
+  keepOnTop(true);
   win.webContents.send('overlay:media', {
-    ...item,
+    url: current.url,
+    kind: current.kind,
+    text: current.text,
+    durationMs: current.durationMs,
+    maxVideoMs: MAX_VIDEO_SECONDS * 1000,
+    maxImagePixels: MAX_IMAGE_PIXELS,
+    maxVideoPixels: MAX_VIDEO_PIXELS,
     sound: s.sound,
     volume: s.volume,
     opacity: s.opacity,
@@ -65,34 +89,52 @@ function pump() {
   onQueueChanged(queue.length);
 }
 
-// Ajoute un média à la file. Renvoie sa position (0 s'il s'affiche tout de suite).
-function enqueue(file, { text, imageSeconds }) {
-  const busy = playing;
+function finishCurrent() {
+  if (!current) return;
+  const item = current;
+  current = null;
+  keepOnTop(false);
+  if (alive()) win.hide();
+  item.onDone?.();
+  onQueueChanged(queue.length);
+  pump();
+}
+
+// Ajoute un média à la file. Renvoie sa position (0 s'il s'affiche tout de suite),
+// ou null si la file est pleine : le média est alors ignoré.
+function enqueue(file, { text, imageSeconds, onDone }) {
+  if (queue.length >= MAX_QUEUE) {
+    onDone?.();
+    return null;
+  }
+  const busy = Boolean(current);
   queue.push({
+    file,
     url: pathToFileURL(file).href,
     kind: mediaKind(file),
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
     durationMs: clamp(imageSeconds, 1, 30) * 1000,
-    maxVideoMs: MAX_VIDEO_MS,
+    onDone,
   });
   pump();
   return busy ? queue.length : 0;
 }
 
-// Certains jeux ou outils (Xbox Game Bar…) repassent au premier plan :
-// on réaffirme régulièrement le « toujours au-dessus » pendant l'affichage.
-setInterval(() => {
-  if (win && !win.isDestroyed() && win.isVisible()) {
-    win.setAlwaysOnTop(true, 'screen-saver');
+// Retire de la file (et coupe s'il est affiché) chaque média qui vérifie la condition.
+function drop(predicate) {
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (predicate(queue[i])) queue.splice(i, 1)[0].onDone?.();
   }
-}, 1000);
+  if (current && predicate(current)) {
+    if (alive()) win.webContents.send('overlay:stop');
+    finishCurrent();
+  }
+  onQueueChanged(queue.length);
+}
 
 ipcMain.on('overlay:done', (event) => {
-  if (!win || win.isDestroyed() || event.sender !== win.webContents) return;
-  win.hide();
-  playing = false;
-  onQueueChanged(queue.length);
-  pump();
+  if (!alive() || event.sender !== win.webContents) return;
+  finishCurrent();
 });
 
 function init(deps) {
@@ -101,4 +143,4 @@ function init(deps) {
   createWindow();
 }
 
-module.exports = { init, enqueue };
+module.exports = { init, enqueue, drop };

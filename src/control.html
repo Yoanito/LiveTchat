@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'">
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src file:; media-src file:">
   <title>LiveTchat</title>
   <link rel="stylesheet" href="control.css">
 </head>
@@ -56,7 +56,7 @@
       <input type="range" id="opacity" min="10" max="100" step="5">
     </label>
     <label>Taille max des médias que j'accepte (Mo)
-      <input type="number" id="maxSizeMb" min="1" max="500" step="1">
+      <input type="number" id="maxSizeMb" min="1" max="100" step="1">
     </label>
   </section>
 
@@ -66,6 +66,7 @@
       <button id="pick">Choisir une image ou une vidéo</button>
       <span id="fileName">Aucun fichier</span>
     </p>
+    <p id="fileNote" class="help" hidden></p>
     <label>Texte (optionnel)
       <input type="text" id="text" maxlength="200" placeholder="Ton message">
     </label>
@@ -78,7 +79,7 @@
       <label>Délai avant affichage (s), le temps de revenir en jeu
         <input type="number" id="delay" min="0" max="60" value="5">
       </label>
-      <button id="send">Afficher chez moi</button>
+      <button id="send" disabled>Afficher chez moi</button>
     </details>
     <p id="status" role="status"></p>
   </section>

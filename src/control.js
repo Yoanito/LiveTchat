@@ -1,7 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const api = window.livetchat;
 
-let selectedFile = null;
+let limits = null;
+// Fichier choisi, vérifié et prêt à partir (son chemin reste dans le processus principal).
+let fileReady = false;
+let currentRoom = null;
 let muted = new Set();
 
 function fillDisplays(displays, currentId) {
@@ -34,10 +37,16 @@ function showSettings(s) {
   muted = new Set(s.muted);
 }
 
+function refreshButtons() {
+  $('sendRoom').disabled = !currentRoom || !fileReady;
+  $('send').disabled = !fileReady;
+}
+
 function showRoom(room) {
+  currentRoom = room;
   $('roomOut').hidden = Boolean(room);
   $('roomIn').hidden = !room;
-  $('sendRoom').disabled = !room;
+  refreshButtons();
   if (!room) return;
 
   $('roomCode').textContent = room.code;
@@ -105,7 +114,6 @@ $('copyCode').addEventListener('click', () => api.copy($('roomCode').textContent
 $('sendRoom').addEventListener('click', async () => {
   setStatus('Envoi…');
   const result = await api.sendToRoom({
-    file: selectedFile,
     text: $('text').value,
     imageSeconds: Number($('imageSeconds').value),
   });
@@ -116,16 +124,72 @@ $('sendRoom').addEventListener('click', async () => {
   );
 });
 
+// Lit les dimensions (et la durée d'une vidéo) sans décoder l'image entière :
+// elle n'est jamais ajoutée à la page.
+function probe({ url, kind }) {
+  return new Promise((resolve) => {
+    const el = kind === 'image' ? new Image() : document.createElement('video');
+    const done = (info) => {
+      el.removeAttribute('src');
+      if (kind === 'video') el.load();
+      resolve(info);
+    };
+    el.addEventListener('error', () => done(null));
+    if (kind === 'image') {
+      el.addEventListener('load', () => done({ width: el.naturalWidth, height: el.naturalHeight }));
+    } else {
+      el.preload = 'metadata';
+      el.muted = true;
+      el.addEventListener('loadedmetadata', () =>
+        done({ width: el.videoWidth, height: el.videoHeight, seconds: el.duration }),
+      );
+    }
+    el.src = url;
+  });
+}
+
+// Renvoie { error } si le média ne doit pas partir, sinon { notes } à afficher.
+function judge(kind, info) {
+  if (!info) return { error: 'Ce fichier ne peut pas être lu (format ou codec non pris en charge).' };
+  const size = `${info.width} × ${info.height}`;
+  const pixels = info.width * info.height;
+  if (kind === 'image') {
+    if (pixels > limits.maxImagePixels) {
+      return { error: `Image trop grande (${size}). Maximum ${limits.maxImagePixels / 1e6} mégapixels.` };
+    }
+    return { notes: [size] };
+  }
+  if (pixels > limits.maxVideoPixels) return { error: `Vidéo trop grande (${size}). Maximum 3840 × 2160.` };
+  const notes = [size, `${Math.round(info.seconds)} s`];
+  if (info.seconds > limits.maxVideoSeconds) {
+    notes.push(`seules les ${limits.maxVideoSeconds} premières secondes seront affichées, mais tout le fichier est envoyé`);
+  }
+  if (Math.min(info.width, info.height) > 1440) notes.push('vidéo 4K, lourde à afficher pendant un jeu');
+  return { notes };
+}
+
 $('pick').addEventListener('click', async () => {
-  const file = await api.pickMedia();
-  if (!file) return;
-  selectedFile = file;
-  $('fileName').textContent = file.split(/[\\/]/).pop();
+  const picked = await api.pickMedia();
+  if (!picked) return;
+  fileReady = false;
+  refreshButtons();
+  $('fileNote').hidden = true;
+  if (picked.error) {
+    $('fileName').textContent = 'Aucun fichier';
+    return setStatus(picked.error, true);
+  }
+  $('fileName').textContent = picked.name;
+  const { error, notes } = judge(picked.kind, await probe(picked));
+  if (error) return setStatus(error, true);
+  setStatus('');
+  $('fileNote').textContent = `${(picked.size / 1024 / 1024).toFixed(1)} Mo · ${notes.join(' · ')}`;
+  $('fileNote').hidden = false;
+  fileReady = true;
+  refreshButtons();
 });
 
 $('send').addEventListener('click', () => {
   const payload = {
-    file: selectedFile,
     text: $('text').value,
     imageSeconds: Number($('imageSeconds').value),
   };
@@ -149,7 +213,8 @@ api.onQueueChanged((n) => {
 
 api.onRoomChanged(showRoom);
 
-api.getSettings().then(async ({ settings, displays }) => {
+api.getSettings().then(async ({ settings, displays, limits: l }) => {
+  limits = l;
   fillDisplays(displays, settings.displayId);
   showSettings(settings);
   $('code').value = settings.lastCode;

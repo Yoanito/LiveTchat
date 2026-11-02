@@ -2,7 +2,16 @@
 // L'overlay, le sélecteur de zone et le salon sont dans src/main/.
 const { app, BrowserWindow, ipcMain, screen, dialog, clipboard } = require('electron');
 const path = require('node:path');
-const { MEDIA_EXT, MAX_TEXT_LENGTH, MAX_NAME_LENGTH } = require('./protocol');
+const { pathToFileURL } = require('node:url');
+const {
+  MEDIA_EXT,
+  MAX_TEXT_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_FILE_MB,
+  MAX_IMAGE_PIXELS,
+  MAX_VIDEO_PIXELS,
+  MAX_VIDEO_SECONDS,
+} = require('./protocol');
 const { clamp } = require('./main/util');
 const { checkFile } = require('./main/files');
 const { newRoomCode, normalizeCode } = require('./main/room-code');
@@ -13,6 +22,17 @@ const zonePicker = require('./main/zone-picker');
 const room = require('./main/room');
 
 let controlWin = null;
+// Fichier choisi dans la fenêtre de réglages. Son chemin reste ici :
+// la page ne reçoit que son nom et son adresse pour l'aperçu.
+let selectedFile = null;
+
+// Limites que la fenêtre de réglages vérifie avant d'envoyer.
+const LIMITS = {
+  maxFileMb: MAX_FILE_MB,
+  maxImagePixels: MAX_IMAGE_PIXELS,
+  maxVideoPixels: MAX_VIDEO_PIXELS,
+  maxVideoSeconds: MAX_VIDEO_SECONDS,
+};
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -52,7 +72,7 @@ const fromControl = (event) => controlWin && !controlWin.isDestroyed() && event.
 
 ipcMain.handle('settings:get', (event) => {
   if (!fromControl(event)) return null;
-  return { settings: settings.get(), displays: displays.listDisplays() };
+  return { settings: settings.get(), displays: displays.listDisplays(), limits: LIMITS };
 });
 
 ipcMain.handle('settings:set', (event, patch) => {
@@ -62,13 +82,11 @@ ipcMain.handle('settings:set', (event, patch) => {
   if ('sound' in patch) s.sound = Boolean(patch.sound);
   if ('volume' in patch) s.volume = clamp(patch.volume, 0, 1);
   if ('opacity' in patch) s.opacity = clamp(patch.opacity, 0.1, 1);
-  if ('maxSizeMb' in patch) {
-    s.maxSizeMb = clamp(patch.maxSizeMb, 1, 500);
-    room.setLimit(s.maxSizeMb);
-  }
+  if ('maxSizeMb' in patch) s.maxSizeMb = clamp(patch.maxSizeMb, 1, MAX_FILE_MB);
   if ('name' in patch) s.name = String(patch.name).trim().slice(0, MAX_NAME_LENGTH);
   if (patch.zone === 'full') s.zone = { ...settings.DEFAULTS.zone };
   settings.save();
+  if ('maxSizeMb' in patch || 'name' in patch) room.updateProfile();
   return s;
 });
 
@@ -92,15 +110,22 @@ ipcMain.handle('media:pick', async (event) => {
     properties: ['openFile'],
     filters: [{ name: 'Images et vidéos', extensions: MEDIA_EXT.map((e) => e.slice(1)) }],
   });
-  return result.canceled ? null : result.filePaths[0];
+  if (result.canceled) return null;
+  const file = result.filePaths[0];
+  const { error, size, kind } = checkFile(file, MAX_FILE_MB);
+  selectedFile = error ? null : file;
+  if (error) return { error };
+  return { name: path.basename(file), url: pathToFileURL(file).href, kind, size };
 });
 
 // Test local : affiche le média uniquement chez moi.
-ipcMain.handle('media:send', (event, { file, text, imageSeconds }) => {
+ipcMain.handle('media:send', (event, { text, imageSeconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
-  const error = checkFile(file, settings.get().maxSizeMb);
+  const { error } = checkFile(selectedFile, settings.get().maxSizeMb);
   if (error) return { ok: false, error };
-  return { ok: true, position: player.enqueue(file, { text, imageSeconds }) };
+  const position = player.enqueue(selectedFile, { text, imageSeconds });
+  if (position === null) return { ok: false, error: "File d'attente pleine, réessaie dans un moment." };
+  return { ok: true, position };
 });
 
 ipcMain.handle('room:create', (event) => {
@@ -123,11 +148,11 @@ ipcMain.handle('room:leave', (event) => {
 
 ipcMain.handle('room:get', (event) => (fromControl(event) ? room.get() : null));
 
-ipcMain.handle('room:send', (event, { file, text, imageSeconds }) => {
+ipcMain.handle('room:send', (event, { text, imageSeconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
-  const error = checkFile(file, 500);
+  const { error } = checkFile(selectedFile, MAX_FILE_MB);
   if (error) return { ok: false, error };
-  return room.send(file, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), imageSeconds });
+  return room.send(selectedFile, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), imageSeconds });
 });
 
 ipcMain.handle('room:mute', (event, { id, muted }) => {
@@ -138,6 +163,7 @@ ipcMain.handle('room:mute', (event, { id, muted }) => {
   else set.delete(String(id));
   s.muted = [...set];
   settings.save();
+  room.updateProfile();
   return s.muted;
 });
 
@@ -148,11 +174,11 @@ ipcMain.handle('clipboard:write', (event, text) => {
 // ---------- Démarrage ----------
 
 // LIVETCHAT_PROFILE permet de lancer plusieurs instances sur le même PC pour tester.
-if (process.env.LIVETCHAT_PROFILE) {
-  app.setPath('userData', `${app.getPath('userData')}-${process.env.LIVETCHAT_PROFILE.replace(/\W/g, '')}`);
-}
+const profile = String(process.env.LIVETCHAT_PROFILE ?? '').replace(/\W/g, '');
+if (profile) app.setPath('userData', `${app.getPath('userData')}-${profile}`);
 
-app.on('before-quit', () => room.leave());
+app.on('before-quit', () => room.leave({ sync: true }));
+app.on('will-quit', () => settings.flush());
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -165,7 +191,12 @@ if (!app.requestSingleInstanceLock()) {
       getSettings: settings.get,
       onQueueChanged: (n) => sendToControl('queue:changed', n),
     });
-    room.init({ notify: sendToControl, enqueue: player.enqueue });
+    room.init({
+      notify: sendToControl,
+      player,
+      // Un dossier par profil : deux instances de test ne s'effacent pas leurs fichiers.
+      tempRoot: path.join(app.getPath('temp'), profile ? `livetchat-${profile}` : 'livetchat'),
+    });
     createControl();
     screen.on('display-added', notifyDisplays);
     screen.on('display-removed', notifyDisplays);

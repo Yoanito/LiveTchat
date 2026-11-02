@@ -10,12 +10,30 @@ const settings = require('./settings');
 
 let win = null;
 let notify = () => {};
-let enqueue = () => {};
+let player = null;
 
 // Salon courant (null si je ne suis dans aucun salon).
 let room = null;
 const pendingSends = new Map();
+// Dossier des fichiers reçus : tempRoot\recv-xxxx, un par salon rejoint.
+let tempRoot = null;
 let recvDir = null;
+
+// Retente l'effacement : sous Windows, un fichier encore ouvert ne s'efface pas tout de suite.
+const RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
+
+// Efface ce qu'une session précédente a laissé (plantage, extinction du PC…).
+function cleanTemp() {
+  try {
+    fs.rmSync(tempRoot, RM_OPTIONS);
+    // Anciennes versions : dossiers livetchat-recv-* directement dans %TEMP%.
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (name.startsWith('livetchat-recv-')) fs.rmSync(path.join(os.tmpdir(), name), RM_OPTIONS);
+    }
+  } catch (err) {
+    console.error('Nettoyage des fichiers temporaires incomplet :', err.message);
+  }
+}
 
 // Fenêtre invisible qui porte la connexion directe (WebRTC) avec les autres membres.
 function createWindow() {
@@ -47,27 +65,33 @@ function get() {
   return room;
 }
 
+// Ce que la page réseau doit savoir de moi. muted reste local : il n'est envoyé à personne.
+function profile() {
+  const s = settings.get();
+  return { id: s.clientId, name: myName(), maxSizeMb: s.maxSizeMb, muted: s.muted };
+}
+
 function join(code) {
   settings.ensureClientId();
   leave();
   const s = settings.get();
-  recvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livetchat-recv-'));
+  fs.mkdirSync(tempRoot, { recursive: true });
+  recvDir = fs.mkdtempSync(path.join(tempRoot, 'recv-'));
   s.lastCode = code;
   settings.save();
   room = { code, members: [], warning: null };
   command({
     type: 'join',
     code,
-    id: s.clientId,
-    name: myName(),
-    maxSizeMb: s.maxSizeMb,
+    ...profile(),
     // Pour les tests : relais Nostr personnalisés, séparés par des virgules.
     relayUrls: process.env.LIVETCHAT_RELAYS?.split(',').filter(Boolean),
   });
   notifyRoom();
 }
 
-function leave() {
+// sync : à la fermeture de l'appli, qui n'attendrait pas un effacement en arrière-plan.
+function leave({ sync = false } = {}) {
   if (!room) return;
   command({ type: 'leave' });
   room = null;
@@ -75,12 +99,25 @@ function leave() {
   pendingSends.clear();
   const dir = recvDir;
   recvDir = null;
-  if (dir) fs.rm(dir, { recursive: true, force: true }, () => {});
+  if (dir) {
+    // Les médias du salon encore en attente ou affichés partent avec lui.
+    player.drop((item) => item.file.startsWith(dir + path.sep));
+    if (sync) {
+      try {
+        fs.rmSync(dir, RM_OPTIONS);
+      } catch (err) {
+        console.error('Fichiers reçus non effacés :', err.message);
+      }
+    } else {
+      fs.rm(dir, RM_OPTIONS, () => {});
+    }
+  }
   notifyRoom();
 }
 
-function setLimit(maxSizeMb) {
-  command({ type: 'limit', maxSizeMb });
+// Pseudo, limite ou liste des mutes changés : la page réseau prévient les autres si besoin.
+function updateProfile() {
+  if (room) command({ type: 'profile', ...profile() });
 }
 
 function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
@@ -90,12 +127,14 @@ function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
   const safeExt = String(ext ?? '').toLowerCase();
   if (!MEDIA_EXT.includes(safeExt)) return;
   if (bytes.byteLength > s.maxSizeMb * 1024 * 1024) return;
-  const file = path.join(recvDir, crypto.randomUUID() + safeExt);
+  const dir = recvDir;
+  const file = path.join(dir, crypto.randomUUID() + safeExt);
   fs.writeFile(file, bytes, (err) => {
     if (err) return;
-    enqueue(file, { text, imageSeconds });
-    // Effacé au bout de 10 minutes, largement après l'affichage.
-    setTimeout(() => fs.rm(file, { force: true }, () => {}), 10 * 60_000).unref();
+    // Salon quitté pendant l'écriture.
+    if (recvDir !== dir) return fs.rm(file, RM_OPTIONS, () => {});
+    // Effacé dès qu'il a été affiché (ou ignoré si la file est pleine).
+    player.enqueue(file, { text, imageSeconds, onDone: () => fs.rm(file, RM_OPTIONS, () => {}) });
   });
 }
 
@@ -106,7 +145,7 @@ async function send(file, { text, imageSeconds }) {
     imageSeconds: clamp(imageSeconds, 1, 30),
   };
   // Je vois aussi ce que j'envoie.
-  enqueue(file, payload);
+  player.enqueue(file, payload);
   if (room.members.length === 0) return { ok: true, delivered: 0, skipped: [] };
 
   const bytes = await fs.promises.readFile(file);
@@ -142,8 +181,10 @@ ipcMain.on('net:event', (event, name, payload) => {
 
 function init(deps) {
   notify = deps.notify;
-  enqueue = deps.enqueue;
+  player = deps.player;
+  tempRoot = deps.tempRoot;
+  cleanTemp();
   createWindow();
 }
 
-module.exports = { init, get, join, leave, send, setLimit };
+module.exports = { init, get, join, leave, send, updateProfile };

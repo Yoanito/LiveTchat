@@ -11,17 +11,19 @@ function mediaKind(file) {
 }
 
 // Vérifie un fichier local avant de l'afficher ou de l'envoyer.
+// Renvoie { error } ou { size, kind }.
 function checkFile(file, maxSizeMb) {
-  if (!file) return 'Choisis un fichier.';
-  if (!mediaKind(file)) return 'Format non pris en charge (PNG, JPEG, WebP, GIF, MP4, WebM).';
+  if (!file) return { error: 'Choisis un fichier.' };
+  const kind = mediaKind(file);
+  if (!kind) return { error: 'Format non pris en charge (PNG, JPEG, WebP, GIF, MP4, WebM).' };
   let size;
   try {
     size = fs.statSync(file).size;
   } catch {
-    return 'Fichier introuvable.';
+    return { error: 'Fichier introuvable.' };
   }
-  if (maxSizeMb && size > maxSizeMb * 1024 * 1024) return `Fichier trop lourd (max ${maxSizeMb} Mo).`;
-  return null;
+  if (maxSizeMb && size > maxSizeMb * 1024 * 1024) return { error: `Fichier trop lourd (max ${maxSizeMb} Mo).` };
+  return { size, kind };
 }
 
 module.exports = { mediaKind, checkFile };
