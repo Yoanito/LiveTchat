@@ -111,7 +111,7 @@ function zoneBounds() {
 }
 
 function notifyDisplays() {
-  controlWin?.webContents.send('displays:changed', listDisplays());
+  sendToControl('displays:changed', listDisplays());
 }
 
 // ---------- Overlay ----------
@@ -147,7 +147,7 @@ function createOverlay() {
 }
 
 function pump() {
-  if (playing || queue.length === 0) return;
+  if (playing || queue.length === 0 || !overlayWin || overlayWin.isDestroyed()) return;
   const item = queue.shift();
   playing = true;
   overlayWin.setBounds(zoneBounds());
@@ -160,7 +160,7 @@ function pump() {
     volume: settings.volume,
     opacity: settings.opacity,
   });
-  controlWin?.webContents.send('queue:changed', queue.length);
+  sendToControl('queue:changed', queue.length);
 }
 
 function mediaKind(file) {
@@ -206,6 +206,11 @@ function openZonePicker() {
 
 // ---------- Fenêtre de réglages ----------
 
+// La fenêtre peut déjà être détruite pendant la fermeture de l'appli.
+function sendToControl(channel, payload) {
+  if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send(channel, payload);
+}
+
 function createControl() {
   controlWin = new BrowserWindow({
     width: 460,
@@ -219,7 +224,10 @@ function createControl() {
     },
   });
   controlWin.loadFile(path.join(__dirname, 'control.html'));
-  controlWin.on('closed', () => app.quit());
+  controlWin.on('closed', () => {
+    controlWin = null;
+    app.quit();
+  });
 }
 
 // ---------- IPC ----------
@@ -262,7 +270,7 @@ ipcMain.handle('zone:save', (event, zone) => {
   if (!fromWindow(zoneWin)(event)) return;
   settings.zone = sanitizeZone(zone);
   saveSettings();
-  controlWin?.webContents.send('settings:changed', settings);
+  sendToControl('settings:changed', settings);
   zoneWin.close();
 });
 
@@ -337,7 +345,7 @@ function netCommand(cmd) {
 }
 
 function notifyRoom() {
-  controlWin?.webContents.send('room:changed', room);
+  sendToControl('room:changed', room);
 }
 
 function myName() {
@@ -485,7 +493,7 @@ ipcMain.on('overlay:done', (event) => {
   if (!fromWindow(overlayWin)(event)) return;
   overlayWin.hide();
   playing = false;
-  controlWin?.webContents.send('queue:changed', queue.length);
+  sendToControl('queue:changed', queue.length);
   pump();
 });
 
