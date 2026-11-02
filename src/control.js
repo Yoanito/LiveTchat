@@ -30,55 +30,30 @@ function showSettings(s) {
   $('opacity').value = Math.round(s.opacity * 100);
   $('opacityOut').textContent = `${$('opacity').value} %`;
   $('maxSizeMb').value = s.maxSizeMb;
-  $('port').value = s.port;
-  $('upnp').checked = s.upnp;
   if (document.activeElement !== $('name')) $('name').value = s.name;
   muted = new Set(s.muted);
 }
 
-const STATE_LABELS = {
-  connecting: 'Connexion…',
-  connected: 'Connecté',
-  retrying: 'Connexion perdue',
-  disconnected: 'Déconnecté',
-};
-
-const INTERNET_HELP = {
-  pending: 'Ouverture du port sur ta box…',
-  upnp: 'Port ouvert automatiquement sur ta box.',
-  off: "Ouverture automatique désactivée : ouvre le port TCP {port} vers ce PC dans l'interface de ta box.",
-  manual:
-    "Ta box n'a pas accepté l'ouverture automatique du port. Ouvre le port TCP {port} vers ce PC dans l'interface de ta box, ou laisse un autre ami héberger.",
-  cgnat:
-    "Ton fournisseur d'accès partage ton adresse IP avec d'autres clients : tes amis ne pourront pas te joindre depuis Internet. Demande une IP dédiée à ton FAI ou laisse un autre ami héberger.",
-};
-
 function showRoom(room) {
-  const inRoom = Boolean(room) && room.state !== 'disconnected';
-  $('roomOut').hidden = inRoom;
-  $('roomIn').hidden = !inRoom;
-  $('roomError').textContent = room?.error && room.state !== 'connected' ? room.error : '';
-  $('sendRoom').disabled = room?.state !== 'connected';
-  if (!inRoom) return;
+  $('roomOut').hidden = Boolean(room);
+  $('roomIn').hidden = !room;
+  $('sendRoom').disabled = !room;
+  if (!room) return;
 
-  const role = room.role === 'host' ? 'Tu héberges ce salon' : 'Tu es dans un salon';
-  const limit = room.maxSizeMb ? `, médias jusqu'à ${room.maxSizeMb} Mo` : '';
-  $('roomState').textContent = `${role} · ${STATE_LABELS[room.state] ?? room.state}${limit}`;
+  $('roomCode').textContent = room.code;
+  $('roomHelp').textContent =
+    room.members.length === 0
+      ? room.warning
+        ? `Connexion impossible avec un ami : ${room.warning}`
+        : 'En attente des amis… Ils doivent entrer le même code.'
+      : '';
 
-  $('hostInfo').hidden = room.role !== 'host';
-  if (room.role === 'host') {
-    $('publicAddress').textContent = room.publicAddress ?? (room.internet === 'pending' ? '…' : 'inconnue');
-    $('copyPublic').disabled = !room.publicAddress;
-    $('internetHelp').textContent = (INTERNET_HELP[room.internet] ?? '').replace('{port}', room.port);
-    $('lanBlock').hidden = !room.lanAddress;
-    $('lanAddress').textContent = room.lanAddress ?? '';
-  }
-
+  const everyone = [{ id: null, name: `${$('name').value.trim() || 'Moi'} (toi)`, me: true }, ...room.members];
   $('members').replaceChildren(
-    ...room.members.map((m) => {
+    ...everyone.map((m) => {
       const li = document.createElement('li');
       const name = document.createElement('span');
-      name.textContent = m.me ? `${m.name} (toi)` : m.name;
+      name.textContent = m.name;
       li.append(name);
       if (!m.me) {
         const label = document.createElement('label');
@@ -112,24 +87,20 @@ $('sound').addEventListener('change', (e) => update({ sound: e.target.checked })
 $('volume').addEventListener('input', (e) => update({ volume: e.target.value / 100 }));
 $('opacity').addEventListener('input', (e) => update({ opacity: e.target.value / 100 }));
 $('maxSizeMb').addEventListener('change', (e) => update({ maxSizeMb: Number(e.target.value) }));
-$('upnp').addEventListener('change', (e) => update({ upnp: e.target.checked }));
-$('port').addEventListener('change', (e) => update({ port: Number(e.target.value) }));
 $('name').addEventListener('change', (e) => update({ name: e.target.value }));
 
-$('host').addEventListener('click', async () => {
+$('create').addEventListener('click', () => {
   $('roomError').textContent = '';
-  const result = await api.hostRoom();
-  if (!result.ok && result.error) $('roomError').textContent = result.error;
+  api.createRoom();
 });
 $('join').addEventListener('click', async () => {
   $('roomError').textContent = '';
-  const result = await api.joinRoom($('address').value);
+  const result = await api.joinRoom($('code').value);
   if (!result.ok && result.error) $('roomError').textContent = result.error;
 });
-$('address').addEventListener('keydown', (e) => e.key === 'Enter' && $('join').click());
+$('code').addEventListener('keydown', (e) => e.key === 'Enter' && $('join').click());
 $('leave').addEventListener('click', () => api.leaveRoom());
-$('copyPublic').addEventListener('click', () => api.copy($('publicAddress').textContent));
-$('copyLan').addEventListener('click', () => api.copy($('lanAddress').textContent));
+$('copyCode').addEventListener('click', () => api.copy($('roomCode').textContent));
 
 $('sendRoom').addEventListener('click', async () => {
   setStatus('Envoi…');
@@ -138,7 +109,11 @@ $('sendRoom').addEventListener('click', async () => {
     text: $('text').value,
     imageSeconds: Number($('imageSeconds').value),
   });
-  setStatus(result.ok ? 'Envoyé au salon.' : result.error, !result.ok);
+  if (!result.ok) return setStatus(result.error, true);
+  const skipped = result.skipped?.length ? ` Trop lourd pour : ${result.skipped.join(', ')}.` : '';
+  setStatus(
+    result.delivered ? `Envoyé à ${result.delivered} ami(s).${skipped}` : `Affiché chez toi seulement, personne d'autre dans le salon.${skipped}`,
+  );
 });
 
 $('pick').addEventListener('click', async () => {
@@ -177,6 +152,6 @@ api.onRoomChanged(showRoom);
 api.getSettings().then(async ({ settings, displays }) => {
   fillDisplays(displays, settings.displayId);
   showSettings(settings);
-  $('address').value = settings.lastAddress;
+  $('code').value = settings.lastCode;
   showRoom(await api.getRoom());
 });

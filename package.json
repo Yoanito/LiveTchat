@@ -5,26 +5,28 @@
   "main": "src/main.js",
   "private": true,
   "scripts": {
+    "build": "esbuild src/net/peer.js --bundle --format=iife --platform=browser --target=chrome130 --outfile=src/net/peer.bundle.js",
+    "prestart": "npm run build",
     "start": "electron .",
+    "predist": "npm run build",
     "dist": "electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^44.10.1",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.28.2",
+    "trystero": "^0.26.0"
   },
   "build": {
     "appId": "fr.livetchat.app",
     "productName": "LiveTchat",
     "files": [
       "src/**/*",
+      "!src/net/peer.js",
       "package.json"
     ],
     "win": {
       "target": "portable"
     }
-  },
-  "dependencies": {
-    "@achingbrain/nat-port-mapper": "^4.0.5",
-    "ws": "^8.22.1"
   }
 }

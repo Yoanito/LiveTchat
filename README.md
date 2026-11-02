@@ -4,27 +4,26 @@ Application Windows pour afficher une image ou une vidéo, avec ou sans texte, e
 
 ## Ce que fait l'appli
 
-- **Salon** : l'un des amis clique sur « Héberger un salon ». Son PC devient le serveur, et l'appli lui donne une adresse du type `lt://1.2.3.4:41234/…` à envoyer aux autres, qui la collent dans « Rejoindre ».
-- **Envoi** : on choisit une image ou une vidéo, un texte optionnel, et « Envoyer au salon ». Le média passe par le PC de l'hôte, chacun le télécharge puis l'affiche dès qu'il l'a reçu.
+- **Salon** : l'un des amis clique sur « Créer un salon » et obtient un code du type `k7p2-x9qd-4mzt-wb3h`. Les autres l'entrent dans « Rejoindre ». Il n'y a pas d'hôte : le salon existe tant qu'au moins une personne y est.
+- **Envoi** : on choisit une image ou une vidéo, un texte optionnel, et « Envoyer au salon ». Le fichier part directement de ton PC vers celui de chaque ami, qui l'affiche dès qu'il l'a reçu.
 - **Mute par personne** : une case à cocher à côté de chaque membre. Le choix est mémorisé.
 - **Affichage** : écran et zone au choix (plein écran ou rectangle dessiné à la souris), son, volume, opacité. Les médias arrivés en même temps passent l'un après l'autre.
 - **Overlay** : fenêtre transparente, toujours au-dessus, traversée par les clics, qui ne prend jamais le focus et n'apparaît ni dans la barre des tâches ni dans Alt+Tab.
 
 Formats acceptés : PNG, JPEG, WebP, GIF, MP4 (H.264), WebM. Vidéos coupées à 30 s.
 
-## Héberger un salon depuis chez soi
+## Comment les PC se connectent
 
-Les amis doivent pouvoir joindre le PC de l'hôte à travers Internet :
+Aucun port à ouvrir, aucun serveur à installer :
 
-1. **Automatique** : l'appli demande à la box d'ouvrir le port (UPnP). La plupart des box le permettent, parfois après avoir activé UPnP dans leur interface.
-2. **Manuel** : si la box refuse, ouvre le port TCP indiqué (41234 par défaut) vers le PC de l'hôte dans l'interface de la box.
-3. **Pare-feu Windows** : au premier « Héberger », Windows demande d'autoriser LiveTchat. Il faut accepter, sinon personne ne pourra se connecter.
+1. Pour se trouver, les PC passent par des **relais publics Nostr** (des serveurs gratuits ouverts à tous). Ils n'y échangent que de quoi établir la connexion, chiffré avec le code du salon.
+2. Ensuite, chaque PC se connecte **directement** aux autres (WebRTC, la technique des appels vidéo dans le navigateur). Les médias ne passent par aucun serveur.
 
-Si l'appli indique que ton fournisseur partage ton adresse IP (CGNAT), tes amis ne pourront pas te joindre : un autre ami doit héberger.
+Le code du salon sert de clé : seuls ceux qui l'ont peuvent entrer. Ne le partage qu'avec tes amis.
 
-L'adresse contient une clé secrète : seuls ceux qui ont l'adresse complète peuvent entrer. Ne la partage qu'avec tes amis.
+Limite : avec certaines box ou certains réseaux (4G, réseaux d'entreprise ou d'école), la connexion directe peut échouer entre deux personnes. L'appli l'indique sous la liste des membres.
 
-Le salon n'existe que tant que l'appli de l'hôte est ouverte. Les fichiers reçus sont effacés au bout de 10 minutes.
+Chacun règle la taille max des médias qu'il accepte. Si un fichier est trop lourd pour un ami, il ne le reçoit pas et l'envoyeur est prévenu. Les fichiers reçus sont effacés au bout de 10 minutes.
 
 ## Lancer
 
@@ -34,6 +33,8 @@ Il faut [Node.js](https://nodejs.org) 20 ou plus récent.
 npm install
 npm start
 ```
+
+`npm start` prépare d'abord le code réseau (`src/net/peer.bundle.js`) avec esbuild.
 
 Pour fabriquer un `.exe` portable à envoyer aux amis :
 
@@ -61,7 +62,7 @@ $env:LIVETCHAT_PROFILE="a"; npm start
 $env:LIVETCHAT_PROFILE="b"; npm start
 ```
 
-Dans la première, héberge ; dans la seconde, rejoins avec l'adresse « réseau local ».
+Dans la première, crée un salon ; dans la seconde, rejoins-le avec le code.
 
 ### Sur vos jeux
 
@@ -88,10 +89,7 @@ Ils sont enregistrés dans `%APPDATA%\livetchat\settings.json`. La zone est stoc
 | `src/overlay.*` | Fenêtre overlay qui affiche le média et le texte |
 | `src/zone.*` | Sélecteur de zone plein écran |
 | `src/control.*` | Fenêtre de réglages, salon et envoi |
-| `src/room/server.js` | Serveur du salon chez l'hôte (WebSocket pour la présence, HTTP pour les fichiers) |
-| `src/room/client.js` | Connexion d'un membre, reconnexion automatique, envoi et téléchargement |
-| `src/room/upnp.js` | Ouverture automatique du port sur la box |
-| `src/room/address.js` | Format des adresses `lt://hôte:port/clé` |
+| `src/net/peer.js` | Connexion directe entre les membres (trystero : WebRTC + relais Nostr), dans une fenêtre invisible |
 | `src/preload-*.js` | Ponts sécurisés entre les pages et le processus principal |
 
 Les pages tournent isolées (`contextIsolation`, `sandbox`, pas d'accès à Node). Le texte reçu est toujours affiché en texte brut, jamais interprété comme du HTML.
@@ -99,4 +97,4 @@ Les pages tournent isolées (`contextIsolation`, `sandbox`, pas d'accès à Node
 ## Prochaines étapes
 
 - Touche panique (raccourci global pour couper l'affichage).
-- Retours de vos tests sur les jeux et sur les box de chacun.
+- Retours de vos tests entre amis, chacun chez soi.

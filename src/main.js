@@ -5,18 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const {
-  IMAGE_EXT,
-  VIDEO_EXT,
-  MEDIA_EXT,
-  MAX_TEXT_LENGTH,
-  MAX_NAME_LENGTH,
-  DEFAULT_PORT,
-} = require('./room/protocol');
-const { RoomServer } = require('./room/server');
-const { RoomClient } = require('./room/client');
-const { formatAddress, parseAddress } = require('./room/address');
-const upnp = require('./room/upnp');
+const { IMAGE_EXT, VIDEO_EXT, MEDIA_EXT, MAX_TEXT_LENGTH, MAX_NAME_LENGTH } = require('./protocol');
 
 const MAX_VIDEO_MS = 30_000;
 
@@ -27,13 +16,11 @@ const DEFAULTS = {
   sound: true,
   volume: 0.5,
   opacity: 1,
-  // Taille max des médias dans le salon que j'héberge.
+  // Taille max des médias que j'accepte de recevoir.
   maxSizeMb: 20,
   name: '',
   clientId: null,
-  port: DEFAULT_PORT,
-  upnp: true,
-  lastAddress: '',
+  lastCode: '',
   muted: [],
 };
 
@@ -41,14 +28,15 @@ let settings;
 let controlWin = null;
 let overlayWin = null;
 let zoneWin = null;
+let netWin = null;
 
 const queue = [];
 let playing = false;
 
-// Salon courant : serveur si j'héberge, client dans tous les cas.
-let server = null;
-let client = null;
+// Salon courant (null si je ne suis dans aucun salon).
 let room = null;
+const pendingSends = new Map();
+let recvDir = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -253,14 +241,9 @@ ipcMain.handle('settings:set', (event, patch) => {
   if ('opacity' in patch) settings.opacity = clamp(patch.opacity, 0.1, 1);
   if ('maxSizeMb' in patch) {
     settings.maxSizeMb = clamp(patch.maxSizeMb, 1, 500);
-    if (server) {
-      server.setMaxSize(settings.maxSizeMb);
-      room.maxSizeMb = settings.maxSizeMb;
-    }
+    netCommand({ type: 'limit', maxSizeMb: settings.maxSizeMb });
   }
   if ('name' in patch) settings.name = String(patch.name).trim().slice(0, MAX_NAME_LENGTH);
-  if ('upnp' in patch) settings.upnp = Boolean(patch.upnp);
-  if ('port' in patch) settings.port = Math.round(clamp(patch.port, 1024, 65535));
   if (patch.zone === 'full') settings.zone = { ...DEFAULTS.zone };
   saveSettings();
   return settings;
@@ -335,172 +318,153 @@ ipcMain.handle('media:send', (event, { file, text, imageSeconds }) => {
 
 // ---------- Salon ----------
 
+// Fenêtre invisible qui porte la connexion directe (WebRTC) avec les autres membres.
+function createNetWindow() {
+  netWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-net.js'),
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  netWin.loadFile(path.join(__dirname, 'net', 'net.html'));
+}
+
+function netCommand(cmd) {
+  if (netWin && !netWin.isDestroyed()) netWin.webContents.send('net:command', cmd);
+}
+
 function notifyRoom() {
   controlWin?.webContents.send('room:changed', room);
 }
 
-function lanAddress() {
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const net of list ?? []) {
-      if (net.family === 'IPv4' && !net.internal && /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(net.address)) {
-        return net.address;
-      }
-    }
-  }
-  return null;
+function myName() {
+  return settings.name || os.userInfo().username;
 }
 
-// Adresse privée ou partagée par le FAI (CGNAT) : injoignable depuis Internet.
-function isUnreachableIp(ip) {
-  return /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip);
+// Code de salon aléatoire, du type « k7p2-x9qd-4mzt-wb3h » (80 bits).
+function newRoomCode() {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(16);
+  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
+  return chars.match(/.{4}/g).join('-');
 }
 
-async function publicIpWithoutUpnp() {
-  try {
-    const res = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(4000) });
-    const ip = (await res.text()).trim();
-    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : null;
-  } catch {
-    return null;
-  }
+function normalizeCode(text) {
+  const code = String(text ?? '').trim().toLowerCase();
+  return /^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/.test(code) ? code : null;
 }
 
-function joinTarget(target) {
+function joinRoom(code) {
   ensureClientId();
-  client = new RoomClient(target, {
-    id: settings.clientId,
-    name: settings.name || os.userInfo().username,
-  });
-  const current = client;
-  client.on('status', ({ state, error }) => {
-    if (client !== current) return;
-    room.state = state;
-    room.error = error ?? null;
-    if (state === 'disconnected' && room.role === 'member') {
-      client = null;
-      room = { ...room, members: [] };
-    }
-    notifyRoom();
-  });
-  client.on('members', (members) => {
-    if (client !== current) return;
-    room.members = members.map((m) => ({ ...m, me: m.id === settings.clientId }));
-    notifyRoom();
-  });
-  client.on('room', ({ maxSizeMb }) => {
-    if (client !== current) return;
-    room.maxSizeMb = maxSizeMb;
-    notifyRoom();
-  });
-  client.on('media', (media) => {
-    if (client !== current || settings.muted.includes(media.from?.id)) return;
-    if (!mediaKind(media.file)) return;
-    enqueue(media.file, media);
-  });
-  client.connect();
-}
-
-async function leaveRoom() {
-  client?.leave();
-  client = null;
-  const hosted = server;
-  server = null;
-  room = null;
-  notifyRoom();
-  if (hosted) {
-    await hosted.stop().catch(() => {});
-    await upnp.closePort();
-  }
-}
-
-async function hostRoom() {
-  await leaveRoom();
-  const hosted = new RoomServer();
-  hosted.maxSizeMb = settings.maxSizeMb;
-  let port;
-  try {
-    port = await hosted.listen(settings.port);
-  } catch (err) {
-    await hosted.stop().catch(() => {});
-    return {
-      ok: false,
-      error:
-        err.code === 'EADDRINUSE'
-          ? `Le port ${settings.port} est déjà utilisé sur ce PC. Choisis-en un autre.`
-          : `Impossible de démarrer le salon (${err.code ?? err.message}).`,
-    };
-  }
-  server = hosted;
-  const lan = lanAddress();
-  room = {
-    role: 'host',
-    state: 'connecting',
-    error: null,
-    members: [],
-    maxSizeMb: settings.maxSizeMb,
-    port,
-    lanAddress: lan ? formatAddress(lan, port, hosted.key) : null,
-    publicAddress: null,
-    internet: 'pending',
-  };
-  joinTarget({ host: '127.0.0.1', port, key: hosted.key });
-  notifyRoom();
-
-  // Ouverture du port sur la box, en arrière-plan.
-  let mapping = null;
-  if (settings.upnp) {
-    try {
-      mapping = await upnp.openPort(port);
-    } catch {
-      mapping = null;
-    }
-  }
-  if (server !== hosted) return { ok: true };
-  if (mapping) {
-    room.publicAddress = formatAddress(mapping.externalIp, mapping.externalPort, hosted.key);
-    room.internet = isUnreachableIp(mapping.externalIp) ? 'cgnat' : 'upnp';
-  } else {
-    const ip = await publicIpWithoutUpnp();
-    if (server !== hosted) return { ok: true };
-    room.publicAddress = ip ? formatAddress(ip, port, hosted.key) : null;
-    room.internet = settings.upnp ? 'manual' : 'off';
-  }
-  notifyRoom();
-  return { ok: true };
-}
-
-ipcMain.handle('room:host', async (event) => {
-  if (!fromWindow(controlWin)(event)) return { ok: false };
-  const result = await hostRoom();
-  if (!result.ok) notifyRoom();
-  return result;
-});
-
-ipcMain.handle('room:join', async (event, address) => {
-  if (!fromWindow(controlWin)(event)) return { ok: false };
-  const target = parseAddress(address);
-  if (!target) return { ok: false, error: 'Adresse invalide. Elle ressemble à lt://1.2.3.4:41234/… ' };
-  await leaveRoom();
-  settings.lastAddress = String(address).trim();
+  leaveRoom();
+  recvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livetchat-recv-'));
+  settings.lastCode = code;
   saveSettings();
-  room = { role: 'member', state: 'connecting', error: null, members: [], maxSizeMb: null };
-  joinTarget(target);
+  room = { code, members: [], warning: null };
+  netCommand({
+    type: 'join',
+    code,
+    id: settings.clientId,
+    name: myName(),
+    maxSizeMb: settings.maxSizeMb,
+    // Pour les tests : relais Nostr personnalisés, séparés par des virgules.
+    relayUrls: process.env.LIVETCHAT_RELAYS?.split(',').filter(Boolean),
+  });
   notifyRoom();
+}
+
+function leaveRoom() {
+  if (!room) return;
+  netCommand({ type: 'leave' });
+  room = null;
+  for (const { resolve } of pendingSends.values()) resolve({ ok: false, error: 'Salon quitté.' });
+  pendingSends.clear();
+  const dir = recvDir;
+  recvDir = null;
+  if (dir) fs.rm(dir, { recursive: true, force: true }, () => {});
+  notifyRoom();
+}
+
+function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
+  if (!room || !recvDir || !(bytes instanceof Uint8Array)) return;
+  if (settings.muted.includes(from?.id)) return;
+  const safeExt = String(ext ?? '').toLowerCase();
+  if (!MEDIA_EXT.includes(safeExt)) return;
+  if (bytes.byteLength > settings.maxSizeMb * 1024 * 1024) return;
+  const file = path.join(recvDir, crypto.randomUUID() + safeExt);
+  fs.writeFile(file, bytes, (err) => {
+    if (err) return;
+    enqueue(file, { text, imageSeconds });
+    // Effacé au bout de 10 minutes, largement après l'affichage.
+    setTimeout(() => fs.rm(file, { force: true }, () => {}), 10 * 60_000).unref();
+  });
+}
+
+ipcMain.on('net:event', (event, name, payload) => {
+  if (!fromWindow(netWin)(event)) return;
+  if (name === 'members' && room) {
+    room.members = payload.map((m) => ({ id: m.id, name: m.name }));
+    notifyRoom();
+  } else if (name === 'warning' && room) {
+    room.warning = payload;
+    notifyRoom();
+  } else if (name === 'media') {
+    receiveMedia(payload);
+  } else if (name === 'sent') {
+    const pending = pendingSends.get(payload.requestId);
+    if (!pending) return;
+    pendingSends.delete(payload.requestId);
+    pending.resolve(payload);
+  }
+});
+
+ipcMain.handle('room:create', (event) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false };
+  joinRoom(newRoomCode());
   return { ok: true };
 });
 
-ipcMain.handle('room:leave', async (event) => {
-  if (fromWindow(controlWin)(event)) await leaveRoom();
+ipcMain.handle('room:join', (event, text) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false };
+  const code = normalizeCode(text);
+  if (!code) return { ok: false, error: 'Code invalide. Il ressemble à k7p2-x9qd-4mzt-wb3h.' };
+  joinRoom(code);
+  return { ok: true };
+});
+
+ipcMain.handle('room:leave', (event) => {
+  if (fromWindow(controlWin)(event)) leaveRoom();
 });
 
 ipcMain.handle('room:get', (event) => (fromWindow(controlWin)(event) ? room : null));
 
 ipcMain.handle('room:send', async (event, { file, text, imageSeconds }) => {
   if (!fromWindow(controlWin)(event)) return { ok: false, error: 'Origine refusée.' };
-  if (!client || room?.state !== 'connected') return { ok: false, error: "Tu n'es pas connecté à un salon." };
-  const error = checkFile(file, room.maxSizeMb);
+  if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
+  const error = checkFile(file, 500);
   if (error) return { ok: false, error };
-  return client.upload(file, { text, imageSeconds: clamp(imageSeconds, 1, 30) });
+  const payload = {
+    text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
+    imageSeconds: clamp(imageSeconds, 1, 30),
+  };
+  // Je vois aussi ce que j'envoie.
+  enqueue(file, payload);
+  if (room.members.length === 0) return { ok: true, delivered: 0, skipped: [] };
+
+  const bytes = await fs.promises.readFile(file);
+  const requestId = crypto.randomUUID();
+  const result = new Promise((resolve) => pendingSends.set(requestId, { resolve }));
+  netCommand({
+    type: 'send',
+    requestId,
+    bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    ext: path.extname(file).toLowerCase(),
+    ...payload,
+  });
+  return result;
 });
 
 ipcMain.handle('room:mute', (event, { id, muted }) => {
@@ -532,14 +496,7 @@ if (process.env.LIVETCHAT_PROFILE) {
   app.setPath('userData', `${app.getPath('userData')}-${process.env.LIVETCHAT_PROFILE.replace(/\W/g, '')}`);
 }
 
-let quitting = false;
-app.on('before-quit', (event) => {
-  if (quitting || (!server && !client)) return;
-  event.preventDefault();
-  quitting = true;
-  // Ferme le salon et le port de la box avant de quitter, sans attendre plus de 3 s.
-  Promise.race([leaveRoom(), new Promise((r) => setTimeout(r, 3000))]).finally(() => app.quit());
-});
+app.on('before-quit', () => leaveRoom());
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -549,6 +506,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     settings = loadSettings();
     createOverlay();
+    createNetWindow();
     createControl();
     screen.on('display-added', notifyDisplays);
     screen.on('display-removed', notifyDisplays);

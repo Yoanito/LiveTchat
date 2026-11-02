@@ -17,30 +17,22 @@
     </label>
 
     <div id="roomOut">
-      <button id="host" class="primary">Héberger un salon</button>
-      <label>Ou rejoindre avec une adresse
-        <input type="text" id="address" placeholder="lt://1.2.3.4:41234/…" spellcheck="false">
+      <button id="create" class="primary">Créer un salon</button>
+      <label>Ou rejoindre avec un code
+        <input type="text" id="code" placeholder="k7p2-x9qd-4mzt-wb3h" spellcheck="false">
       </label>
       <button id="join">Rejoindre</button>
     </div>
 
     <div id="roomIn" hidden>
-      <p id="roomState"></p>
-      <div id="hostInfo" hidden>
-        <p class="address">
-          Adresse à donner aux amis :<br>
-          <code id="publicAddress"></code>
-          <button id="copyPublic">Copier</button>
-        </p>
-        <p id="internetHelp" class="help"></p>
-        <p class="address" id="lanBlock">
-          Sur le même réseau local :<br>
-          <code id="lanAddress"></code>
-          <button id="copyLan">Copier</button>
-        </p>
-      </div>
+      <p class="address">
+        Code du salon, à donner aux amis :<br>
+        <code id="roomCode"></code>
+        <button id="copyCode">Copier</button>
+      </p>
       <h3>Membres</h3>
       <ul id="members"></ul>
+      <p id="roomHelp" class="help"></p>
       <button id="leave">Quitter le salon</button>
     </div>
     <p id="roomError" class="error-text"></p>
@@ -63,12 +55,8 @@
     <label>Opacité <output id="opacityOut"></output>
       <input type="range" id="opacity" min="10" max="100" step="5">
     </label>
-    <label>Taille max des médias quand j'héberge (Mo)
+    <label>Taille max des médias que j'accepte (Mo)
       <input type="number" id="maxSizeMb" min="1" max="500" step="1">
-    </label>
-    <label class="inline"><input type="checkbox" id="upnp"> Ouvrir le port de ma box automatiquement</label>
-    <label>Port quand j'héberge
-      <input type="number" id="port" min="1024" max="65535" step="1">
     </label>
   </section>
 
