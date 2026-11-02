@@ -9,12 +9,17 @@
     "prestart": "npm run build",
     "start": "electron .",
     "predist": "npm run build",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win portable",
+    "lint": "eslint .",
+    "test": "node --test"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "electron": "^44.10.1",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
     "trystero": "^0.26.0"
   },
   "build": {

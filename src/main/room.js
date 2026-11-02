@@ -6,9 +6,9 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { MEDIA_EXT, MAX_TEXT_LENGTH, DEFAULT_IMAGE_SECONDS } = require('../protocol');
 const { clamp, parseNumber } = require('./util');
+const settings = require('./settings');
 
 const MB = 1024 * 1024;
-const settings = require('./settings');
 
 let win = null;
 // La page réseau est chargée et peut recevoir des commandes.
@@ -156,7 +156,7 @@ function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
   if (s.muted.includes(from?.id)) return;
   const safeExt = String(ext ?? '').toLowerCase();
   if (!MEDIA_EXT.includes(safeExt)) return;
-  if (bytes.byteLength > s.maxSizeMb * 1024 * 1024) return;
+  if (bytes.byteLength > s.maxSizeMb * MB) return;
   const dir = recvDir;
   const file = path.join(dir, crypto.randomUUID() + safeExt);
   fs.writeFile(file, bytes, (err) => {
