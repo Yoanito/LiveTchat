@@ -103,3 +103,62 @@ button.primary {
 #status.error {
   color: var(--error);
 }
+
+h3 {
+  font-size: 14px;
+  margin: 12px 0 6px;
+}
+
+code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.help {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.error-text {
+  color: var(--error);
+  min-height: 0;
+  margin: 6px 0 0;
+}
+
+#members {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+}
+
+#members li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+#members label {
+  margin: 0;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+}
+
+details {
+  margin-top: 10px;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

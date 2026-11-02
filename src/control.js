@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const api = window.livetchat;
 
 let selectedFile = null;
+let muted = new Set();
 
 function fillDisplays(displays, currentId) {
   const select = $('display');
@@ -29,6 +30,45 @@ function showSettings(s) {
   $('opacity').value = Math.round(s.opacity * 100);
   $('opacityOut').textContent = `${$('opacity').value} %`;
   $('maxSizeMb').value = s.maxSizeMb;
+  if (document.activeElement !== $('name')) $('name').value = s.name;
+  muted = new Set(s.muted);
+}
+
+function showRoom(room) {
+  $('roomOut').hidden = Boolean(room);
+  $('roomIn').hidden = !room;
+  $('sendRoom').disabled = !room;
+  if (!room) return;
+
+  $('roomCode').textContent = room.code;
+  $('roomHelp').textContent =
+    room.members.length === 0
+      ? room.warning
+        ? `Connexion impossible avec un ami : ${room.warning}`
+        : 'En attente des amis… Ils doivent entrer le même code.'
+      : '';
+
+  const everyone = [{ id: null, name: `${$('name').value.trim() || 'Moi'} (toi)`, me: true }, ...room.members];
+  $('members').replaceChildren(
+    ...everyone.map((m) => {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = m.name;
+      li.append(name);
+      if (!m.me) {
+        const label = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = muted.has(m.id);
+        box.addEventListener('change', async () => {
+          muted = new Set(await api.setMuted(m.id, box.checked));
+        });
+        label.append(box, 'Mute');
+        li.append(label);
+      }
+      return li;
+    }),
+  );
 }
 
 function setStatus(message, isError = false) {
@@ -47,6 +87,34 @@ $('sound').addEventListener('change', (e) => update({ sound: e.target.checked })
 $('volume').addEventListener('input', (e) => update({ volume: e.target.value / 100 }));
 $('opacity').addEventListener('input', (e) => update({ opacity: e.target.value / 100 }));
 $('maxSizeMb').addEventListener('change', (e) => update({ maxSizeMb: Number(e.target.value) }));
+$('name').addEventListener('change', (e) => update({ name: e.target.value }));
+
+$('create').addEventListener('click', () => {
+  $('roomError').textContent = '';
+  api.createRoom();
+});
+$('join').addEventListener('click', async () => {
+  $('roomError').textContent = '';
+  const result = await api.joinRoom($('code').value);
+  if (!result.ok && result.error) $('roomError').textContent = result.error;
+});
+$('code').addEventListener('keydown', (e) => e.key === 'Enter' && $('join').click());
+$('leave').addEventListener('click', () => api.leaveRoom());
+$('copyCode').addEventListener('click', () => api.copy($('roomCode').textContent));
+
+$('sendRoom').addEventListener('click', async () => {
+  setStatus('Envoi…');
+  const result = await api.sendToRoom({
+    file: selectedFile,
+    text: $('text').value,
+    imageSeconds: Number($('imageSeconds').value),
+  });
+  if (!result.ok) return setStatus(result.error, true);
+  const skipped = result.skipped?.length ? ` Trop lourd pour : ${result.skipped.join(', ')}.` : '';
+  setStatus(
+    result.delivered ? `Envoyé à ${result.delivered} ami(s).${skipped}` : `Affiché chez toi seulement, personne d'autre dans le salon.${skipped}`,
+  );
+});
 
 $('pick').addEventListener('click', async () => {
   const file = await api.pickMedia();
@@ -79,7 +147,11 @@ api.onQueueChanged((n) => {
   if (n > 0) setStatus(`${n} média(s) en attente.`);
 });
 
-api.getSettings().then(({ settings, displays }) => {
+api.onRoomChanged(showRoom);
+
+api.getSettings().then(async ({ settings, displays }) => {
   fillDisplays(displays, settings.displayId);
   showSettings(settings);
+  $('code').value = settings.lastCode;
+  showRoom(await api.getRoom());
 });

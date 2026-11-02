@@ -1,13 +1,13 @@
 // Processus principal : fenêtre de réglages, fenêtre overlay et sélecteur de zone.
-const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
+const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
+const { IMAGE_EXT, VIDEO_EXT, MEDIA_EXT, MAX_TEXT_LENGTH, MAX_NAME_LENGTH } = require('./protocol');
 
-const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
-const VIDEO_EXT = ['.mp4', '.webm'];
 const MAX_VIDEO_MS = 30_000;
-const MAX_TEXT_LENGTH = 200;
 
 const DEFAULTS = {
   displayId: null,
@@ -16,16 +16,27 @@ const DEFAULTS = {
   sound: true,
   volume: 0.5,
   opacity: 1,
+  // Taille max des médias que j'accepte de recevoir.
   maxSizeMb: 20,
+  name: '',
+  clientId: null,
+  lastCode: '',
+  muted: [],
 };
 
 let settings;
 let controlWin = null;
 let overlayWin = null;
 let zoneWin = null;
+let netWin = null;
 
 const queue = [];
 let playing = false;
+
+// Salon courant (null si je ne suis dans aucun salon).
+let room = null;
+const pendingSends = new Map();
+let recvDir = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -41,6 +52,13 @@ function loadSettings() {
     return { ...DEFAULTS, ...saved, zone: { ...DEFAULTS.zone, ...saved.zone } };
   } catch {
     return structuredClone(DEFAULTS);
+  }
+}
+
+function ensureClientId() {
+  if (!settings.clientId) {
+    settings.clientId = crypto.randomUUID();
+    saveSettings();
   }
 }
 
@@ -93,7 +111,7 @@ function zoneBounds() {
 }
 
 function notifyDisplays() {
-  controlWin?.webContents.send('displays:changed', listDisplays());
+  sendToControl('displays:changed', listDisplays());
 }
 
 // ---------- Overlay ----------
@@ -129,7 +147,7 @@ function createOverlay() {
 }
 
 function pump() {
-  if (playing || queue.length === 0) return;
+  if (playing || queue.length === 0 || !overlayWin || overlayWin.isDestroyed()) return;
   const item = queue.shift();
   playing = true;
   overlayWin.setBounds(zoneBounds());
@@ -142,7 +160,7 @@ function pump() {
     volume: settings.volume,
     opacity: settings.opacity,
   });
-  controlWin?.webContents.send('queue:changed', queue.length);
+  sendToControl('queue:changed', queue.length);
 }
 
 function mediaKind(file) {
@@ -188,10 +206,15 @@ function openZonePicker() {
 
 // ---------- Fenêtre de réglages ----------
 
+// La fenêtre peut déjà être détruite pendant la fermeture de l'appli.
+function sendToControl(channel, payload) {
+  if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send(channel, payload);
+}
+
 function createControl() {
   controlWin = new BrowserWindow({
     width: 460,
-    height: 680,
+    height: 860,
     title: 'LiveTchat',
     autoHideMenuBar: true,
     webPreferences: {
@@ -201,7 +224,10 @@ function createControl() {
     },
   });
   controlWin.loadFile(path.join(__dirname, 'control.html'));
-  controlWin.on('closed', () => app.quit());
+  controlWin.on('closed', () => {
+    controlWin = null;
+    app.quit();
+  });
 }
 
 // ---------- IPC ----------
@@ -221,7 +247,11 @@ ipcMain.handle('settings:set', (event, patch) => {
   if ('sound' in patch) settings.sound = Boolean(patch.sound);
   if ('volume' in patch) settings.volume = clamp(patch.volume, 0, 1);
   if ('opacity' in patch) settings.opacity = clamp(patch.opacity, 0.1, 1);
-  if ('maxSizeMb' in patch) settings.maxSizeMb = clamp(patch.maxSizeMb, 1, 500);
+  if ('maxSizeMb' in patch) {
+    settings.maxSizeMb = clamp(patch.maxSizeMb, 1, 500);
+    netCommand({ type: 'limit', maxSizeMb: settings.maxSizeMb });
+  }
+  if ('name' in patch) settings.name = String(patch.name).trim().slice(0, MAX_NAME_LENGTH);
   if (patch.zone === 'full') settings.zone = { ...DEFAULTS.zone };
   saveSettings();
   return settings;
@@ -240,7 +270,7 @@ ipcMain.handle('zone:save', (event, zone) => {
   if (!fromWindow(zoneWin)(event)) return;
   settings.zone = sanitizeZone(zone);
   saveSettings();
-  controlWin?.webContents.send('settings:changed', settings);
+  sendToControl('settings:changed', settings);
   zoneWin.close();
 });
 
@@ -253,47 +283,228 @@ ipcMain.handle('media:pick', async (event) => {
   const result = await dialog.showOpenDialog(controlWin, {
     properties: ['openFile'],
     filters: [
-      { name: 'Images et vidéos', extensions: [...IMAGE_EXT, ...VIDEO_EXT].map((e) => e.slice(1)) },
+      { name: 'Images et vidéos', extensions: MEDIA_EXT.map((e) => e.slice(1)) },
     ],
   });
   return result.canceled ? null : result.filePaths[0];
 });
 
-ipcMain.handle('media:send', (event, { file, text, imageSeconds }) => {
-  if (!fromWindow(controlWin)(event)) return { ok: false, error: 'Origine refusée.' };
-  if (!file) return { ok: false, error: 'Choisis un fichier.' };
-  const kind = mediaKind(file);
-  if (!kind) return { ok: false, error: 'Format non pris en charge (PNG, JPEG, WebP, GIF, MP4, WebM).' };
+// Vérifie un fichier local avant de l'afficher ou de l'envoyer.
+function checkFile(file, maxSizeMb) {
+  if (!file) return 'Choisis un fichier.';
+  if (!mediaKind(file)) return 'Format non pris en charge (PNG, JPEG, WebP, GIF, MP4, WebM).';
   let size;
   try {
     size = fs.statSync(file).size;
   } catch {
-    return { ok: false, error: 'Fichier introuvable.' };
+    return 'Fichier introuvable.';
   }
-  if (size > settings.maxSizeMb * 1024 * 1024) {
-    return { ok: false, error: `Fichier trop lourd (max ${settings.maxSizeMb} Mo).` };
-  }
+  if (maxSizeMb && size > maxSizeMb * 1024 * 1024) return `Fichier trop lourd (max ${maxSizeMb} Mo).`;
+  return null;
+}
+
+function enqueue(file, { text, imageSeconds }) {
   const busy = playing;
   queue.push({
     url: pathToFileURL(file).href,
-    kind,
+    kind: mediaKind(file),
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
     durationMs: clamp(imageSeconds, 1, 30) * 1000,
     maxVideoMs: MAX_VIDEO_MS,
   });
   pump();
-  return { ok: true, position: busy ? queue.length : 0 };
+  return busy ? queue.length : 0;
+}
+
+// Test local : affiche le média uniquement chez moi.
+ipcMain.handle('media:send', (event, { file, text, imageSeconds }) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false, error: 'Origine refusée.' };
+  const error = checkFile(file, settings.maxSizeMb);
+  if (error) return { ok: false, error };
+  return { ok: true, position: enqueue(file, { text, imageSeconds }) };
+});
+
+// ---------- Salon ----------
+
+// Fenêtre invisible qui porte la connexion directe (WebRTC) avec les autres membres.
+function createNetWindow() {
+  netWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-net.js'),
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  netWin.loadFile(path.join(__dirname, 'net', 'net.html'));
+}
+
+function netCommand(cmd) {
+  if (netWin && !netWin.isDestroyed()) netWin.webContents.send('net:command', cmd);
+}
+
+function notifyRoom() {
+  sendToControl('room:changed', room);
+}
+
+function myName() {
+  return settings.name || os.userInfo().username;
+}
+
+// Code de salon aléatoire, du type « k7p2-x9qd-4mzt-wb3h » (80 bits).
+function newRoomCode() {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(16);
+  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
+  return chars.match(/.{4}/g).join('-');
+}
+
+function normalizeCode(text) {
+  const code = String(text ?? '').trim().toLowerCase();
+  return /^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/.test(code) ? code : null;
+}
+
+function joinRoom(code) {
+  ensureClientId();
+  leaveRoom();
+  recvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livetchat-recv-'));
+  settings.lastCode = code;
+  saveSettings();
+  room = { code, members: [], warning: null };
+  netCommand({
+    type: 'join',
+    code,
+    id: settings.clientId,
+    name: myName(),
+    maxSizeMb: settings.maxSizeMb,
+    // Pour les tests : relais Nostr personnalisés, séparés par des virgules.
+    relayUrls: process.env.LIVETCHAT_RELAYS?.split(',').filter(Boolean),
+  });
+  notifyRoom();
+}
+
+function leaveRoom() {
+  if (!room) return;
+  netCommand({ type: 'leave' });
+  room = null;
+  for (const { resolve } of pendingSends.values()) resolve({ ok: false, error: 'Salon quitté.' });
+  pendingSends.clear();
+  const dir = recvDir;
+  recvDir = null;
+  if (dir) fs.rm(dir, { recursive: true, force: true }, () => {});
+  notifyRoom();
+}
+
+function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
+  if (!room || !recvDir || !(bytes instanceof Uint8Array)) return;
+  if (settings.muted.includes(from?.id)) return;
+  const safeExt = String(ext ?? '').toLowerCase();
+  if (!MEDIA_EXT.includes(safeExt)) return;
+  if (bytes.byteLength > settings.maxSizeMb * 1024 * 1024) return;
+  const file = path.join(recvDir, crypto.randomUUID() + safeExt);
+  fs.writeFile(file, bytes, (err) => {
+    if (err) return;
+    enqueue(file, { text, imageSeconds });
+    // Effacé au bout de 10 minutes, largement après l'affichage.
+    setTimeout(() => fs.rm(file, { force: true }, () => {}), 10 * 60_000).unref();
+  });
+}
+
+ipcMain.on('net:event', (event, name, payload) => {
+  if (!fromWindow(netWin)(event)) return;
+  if (name === 'members' && room) {
+    room.members = payload.map((m) => ({ id: m.id, name: m.name }));
+    notifyRoom();
+  } else if (name === 'warning' && room) {
+    room.warning = payload;
+    notifyRoom();
+  } else if (name === 'media') {
+    receiveMedia(payload);
+  } else if (name === 'sent') {
+    const pending = pendingSends.get(payload.requestId);
+    if (!pending) return;
+    pendingSends.delete(payload.requestId);
+    pending.resolve(payload);
+  }
+});
+
+ipcMain.handle('room:create', (event) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false };
+  joinRoom(newRoomCode());
+  return { ok: true };
+});
+
+ipcMain.handle('room:join', (event, text) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false };
+  const code = normalizeCode(text);
+  if (!code) return { ok: false, error: 'Code invalide. Il ressemble à k7p2-x9qd-4mzt-wb3h.' };
+  joinRoom(code);
+  return { ok: true };
+});
+
+ipcMain.handle('room:leave', (event) => {
+  if (fromWindow(controlWin)(event)) leaveRoom();
+});
+
+ipcMain.handle('room:get', (event) => (fromWindow(controlWin)(event) ? room : null));
+
+ipcMain.handle('room:send', async (event, { file, text, imageSeconds }) => {
+  if (!fromWindow(controlWin)(event)) return { ok: false, error: 'Origine refusée.' };
+  if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
+  const error = checkFile(file, 500);
+  if (error) return { ok: false, error };
+  const payload = {
+    text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
+    imageSeconds: clamp(imageSeconds, 1, 30),
+  };
+  // Je vois aussi ce que j'envoie.
+  enqueue(file, payload);
+  if (room.members.length === 0) return { ok: true, delivered: 0, skipped: [] };
+
+  const bytes = await fs.promises.readFile(file);
+  const requestId = crypto.randomUUID();
+  const result = new Promise((resolve) => pendingSends.set(requestId, { resolve }));
+  netCommand({
+    type: 'send',
+    requestId,
+    bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    ext: path.extname(file).toLowerCase(),
+    ...payload,
+  });
+  return result;
+});
+
+ipcMain.handle('room:mute', (event, { id, muted }) => {
+  if (!fromWindow(controlWin)(event)) return null;
+  const set = new Set(settings.muted);
+  if (muted) set.add(String(id));
+  else set.delete(String(id));
+  settings.muted = [...set];
+  saveSettings();
+  return settings.muted;
+});
+
+ipcMain.handle('clipboard:write', (event, text) => {
+  if (fromWindow(controlWin)(event)) clipboard.writeText(String(text));
 });
 
 ipcMain.on('overlay:done', (event) => {
   if (!fromWindow(overlayWin)(event)) return;
   overlayWin.hide();
   playing = false;
-  controlWin?.webContents.send('queue:changed', queue.length);
+  sendToControl('queue:changed', queue.length);
   pump();
 });
 
 // ---------- Démarrage ----------
+
+// LIVETCHAT_PROFILE permet de lancer plusieurs instances sur le même PC pour tester.
+if (process.env.LIVETCHAT_PROFILE) {
+  app.setPath('userData', `${app.getPath('userData')}-${process.env.LIVETCHAT_PROFILE.replace(/\W/g, '')}`);
+}
+
+app.on('before-quit', () => leaveRoom());
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -303,6 +514,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     settings = loadSettings();
     createOverlay();
+    createNetWindow();
     createControl();
     screen.on('display-added', notifyDisplays);
     screen.on('display-removed', notifyDisplays);

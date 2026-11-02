@@ -8,7 +8,35 @@
   <link rel="stylesheet" href="control.css">
 </head>
 <body>
-  <h1>LiveTchat <small>prototype overlay</small></h1>
+  <h1>LiveTchat</h1>
+
+  <section>
+    <h2>Salon</h2>
+    <label>Pseudo
+      <input type="text" id="name" maxlength="32" placeholder="Ton pseudo">
+    </label>
+
+    <div id="roomOut">
+      <button id="create" class="primary">Créer un salon</button>
+      <label>Ou rejoindre avec un code
+        <input type="text" id="code" placeholder="k7p2-x9qd-4mzt-wb3h" spellcheck="false">
+      </label>
+      <button id="join">Rejoindre</button>
+    </div>
+
+    <div id="roomIn" hidden>
+      <p class="address">
+        Code du salon, à donner aux amis :<br>
+        <code id="roomCode"></code>
+        <button id="copyCode">Copier</button>
+      </p>
+      <h3>Membres</h3>
+      <ul id="members"></ul>
+      <p id="roomHelp" class="help"></p>
+      <button id="leave">Quitter le salon</button>
+    </div>
+    <p id="roomError" class="error-text"></p>
+  </section>
 
   <section>
     <h2>Affichage chez moi</h2>
@@ -27,13 +55,13 @@
     <label>Opacité <output id="opacityOut"></output>
       <input type="range" id="opacity" min="10" max="100" step="5">
     </label>
-    <label>Taille max des médias (Mo)
+    <label>Taille max des médias que j'accepte (Mo)
       <input type="number" id="maxSizeMb" min="1" max="500" step="1">
     </label>
   </section>
 
   <section>
-    <h2>Tester un média</h2>
+    <h2>Envoyer un média</h2>
     <p class="file">
       <button id="pick">Choisir une image ou une vidéo</button>
       <span id="fileName">Aucun fichier</span>
@@ -44,10 +72,14 @@
     <label>Durée d'affichage d'une image (s)
       <input type="number" id="imageSeconds" min="1" max="30" value="5">
     </label>
-    <label>Délai avant affichage (s), le temps de revenir en jeu
-      <input type="number" id="delay" min="0" max="60" value="5">
-    </label>
-    <button id="send" class="primary">Afficher</button>
+    <button id="sendRoom" class="primary" disabled>Envoyer au salon</button>
+    <details>
+      <summary>Tester seulement chez moi</summary>
+      <label>Délai avant affichage (s), le temps de revenir en jeu
+        <input type="number" id="delay" min="0" max="60" value="5">
+      </label>
+      <button id="send">Afficher chez moi</button>
+    </details>
     <p id="status" role="status"></p>
   </section>
 
