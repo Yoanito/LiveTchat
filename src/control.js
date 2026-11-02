@@ -5,6 +5,7 @@ let limits = null;
 // Fichier choisi, vérifié et prêt à partir (son chemin reste dans le processus principal).
 let fileReady = false;
 let currentRoom = null;
+let sending = false;
 let muted = new Set();
 
 function fillDisplays(displays, currentId) {
@@ -38,7 +39,8 @@ function showSettings(s) {
 }
 
 function refreshButtons() {
-  $('sendRoom').disabled = !currentRoom || !fileReady;
+  // Désactivé pendant un envoi : un double-clic enverrait le fichier deux fois.
+  $('sendRoom').disabled = !currentRoom || !fileReady || sending;
   $('send').disabled = !fileReady;
 }
 
@@ -111,17 +113,34 @@ $('code').addEventListener('keydown', (e) => e.key === 'Enter' && $('join').clic
 $('leave').addEventListener('click', () => api.leaveRoom());
 $('copyCode').addEventListener('click', () => api.copy($('roomCode').textContent));
 
+function describeSend({ delivered, failed, skipped, shownHere }) {
+  const parts = [];
+  if (delivered.length) parts.push(`Envoyé à ${delivered.join(', ')}.`);
+  if (failed.length) parts.push(`Pas reçu par ${failed.join(', ')} (déconnecté ou refusé).`);
+  if (skipped.length) parts.push(`Trop lourd pour ${skipped.join(', ')}.`);
+  if (!delivered.length && !failed.length && !skipped.length) {
+    parts.push("Affiché chez toi seulement, personne d'autre dans le salon.");
+  }
+  if (!shownHere) parts.push("Pas affiché chez toi : file d'attente pleine.");
+  return parts.join(' ');
+}
+
 $('sendRoom').addEventListener('click', async () => {
+  sending = true;
+  refreshButtons();
   setStatus('Envoi…');
-  const result = await api.sendToRoom({
-    text: $('text').value,
-    imageSeconds: Number($('imageSeconds').value),
-  });
+  let result;
+  try {
+    result = await api.sendToRoom({
+      text: $('text').value,
+      imageSeconds: Number($('imageSeconds').value),
+    });
+  } finally {
+    sending = false;
+    refreshButtons();
+  }
   if (!result.ok) return setStatus(result.error, true);
-  const skipped = result.skipped?.length ? ` Trop lourd pour : ${result.skipped.join(', ')}.` : '';
-  setStatus(
-    result.delivered ? `Envoyé à ${result.delivered} ami(s).${skipped}` : `Affiché chez toi seulement, personne d'autre dans le salon.${skipped}`,
-  );
+  setStatus(describeSend(result), result.failed.length > 0);
 });
 
 // Lit les dimensions (et la durée d'une vidéo) sans décoder l'image entière :
@@ -208,7 +227,10 @@ api.onDisplaysChanged(async () => {
   fillDisplays(displays, settings.displayId);
 });
 api.onQueueChanged((n) => {
-  if (n > 0) setStatus(`${n} média(s) en attente.`);
+  if (n > 0 && !sending) setStatus(`${n} média(s) en attente.`);
+});
+api.onSendProgress((ratio) => {
+  if (sending) setStatus(`Envoi… ${Math.round(ratio * 100)} %`);
 });
 
 api.onRoomChanged(showRoom);

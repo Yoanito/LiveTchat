@@ -150,9 +150,9 @@ ipcMain.handle('room:get', (event) => (fromControl(event) ? room.get() : null));
 
 ipcMain.handle('room:send', (event, { text, imageSeconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
-  const { error } = checkFile(selectedFile, MAX_FILE_MB);
+  const { error, size } = checkFile(selectedFile, MAX_FILE_MB);
   if (error) return { ok: false, error };
-  return room.send(selectedFile, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), imageSeconds });
+  return room.send(selectedFile, size, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), imageSeconds });
 });
 
 ipcMain.handle('room:mute', (event, { id, muted }) => {

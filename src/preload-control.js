@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld('livetchat', {
   onSettingsChanged: (cb) => ipcRenderer.on('settings:changed', (_e, s) => cb(s)),
   onDisplaysChanged: (cb) => ipcRenderer.on('displays:changed', (_e, d) => cb(d)),
   onQueueChanged: (cb) => ipcRenderer.on('queue:changed', (_e, n) => cb(n)),
+  onSendProgress: (cb) => ipcRenderer.on('send:progress', (_e, ratio) => cb(ratio)),
 });

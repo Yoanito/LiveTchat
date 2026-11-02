@@ -6,6 +6,8 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { MEDIA_EXT, MAX_TEXT_LENGTH } = require('../protocol');
 const { clamp } = require('./util');
+
+const MB = 1024 * 1024;
 const settings = require('./settings');
 
 let win = null;
@@ -138,39 +140,72 @@ function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
   });
 }
 
-async function send(file, { text, imageSeconds }) {
+// Lit le fichier et le confie à la page réseau. Une fois la fonction terminée,
+// le contenu n'est plus gardé en mémoire ici pendant le transfert.
+async function transmit(file, requestId, targets, payload) {
+  const bytes = await fs.promises.readFile(file);
+  command({
+    type: 'send',
+    requestId,
+    targets,
+    bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    ext: path.extname(file).toLowerCase(),
+    ...payload,
+  });
+}
+
+// Envoie un média à chaque membre qui l'accepte. Le résultat est donné par ami.
+async function send(file, size, { text, imageSeconds }) {
   if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
   const payload = {
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
     imageSeconds: clamp(imageSeconds, 1, 30),
   };
   // Je vois aussi ce que j'envoie.
-  player.enqueue(file, payload);
-  if (room.members.length === 0) return { ok: true, delivered: 0, skipped: [] };
+  const shownHere = player.enqueue(file, payload) !== null;
+  const members = room.members;
+  const targets = members.filter((m) => size <= m.maxSizeMb * MB);
+  const skipped = members.filter((m) => !targets.includes(m)).map((m) => m.name);
+  // Personne ne peut le recevoir : inutile de lire le fichier.
+  if (targets.length === 0) return { ok: true, delivered: [], failed: [], skipped, shownHere };
 
-  const bytes = await fs.promises.readFile(file);
   const requestId = crypto.randomUUID();
   const result = new Promise((resolve) => pendingSends.set(requestId, { resolve }));
-  command({
-    type: 'send',
-    requestId,
-    bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    ext: path.extname(file).toLowerCase(),
-    ...payload,
-  });
-  return result;
+  try {
+    await transmit(file, requestId, targets.map((m) => m.peerId), payload);
+  } catch (err) {
+    pendingSends.delete(requestId);
+    return { ok: false, error: `Lecture du fichier impossible (${err.message}).` };
+  }
+  const outcome = await result;
+  if (!outcome.ok) return outcome;
+  const nameOf = (peerId) => members.find((m) => m.peerId === peerId)?.name ?? 'un ami';
+  return {
+    ok: true,
+    delivered: outcome.delivered.map(nameOf),
+    failed: outcome.failed.map(nameOf),
+    skipped,
+    shownHere,
+  };
 }
 
 ipcMain.on('net:event', (event, name, payload) => {
   if (!win || win.isDestroyed() || event.sender !== win.webContents) return;
   if (name === 'members' && room) {
-    room.members = payload.map((m) => ({ id: m.id, name: m.name }));
+    room.members = payload.map((m) => ({
+      peerId: String(m.peerId),
+      id: m.id,
+      name: m.name,
+      maxSizeMb: Number(m.maxSizeMb) || 20,
+    }));
     notifyRoom();
   } else if (name === 'warning' && room) {
     room.warning = payload;
     notifyRoom();
   } else if (name === 'media') {
     receiveMedia(payload);
+  } else if (name === 'progress') {
+    if (pendingSends.has(payload.requestId)) notify('send:progress', clamp(payload.ratio, 0, 1));
   } else if (name === 'sent') {
     const pending = pendingSends.get(payload.requestId);
     if (!pending) return;

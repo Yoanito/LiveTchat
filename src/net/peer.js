@@ -7,6 +7,8 @@ const MB = 1024 * 1024;
 // Mémoire réservée aux médias en cours de réception, tous amis confondus.
 // Au-delà, les envois suivants attendent leur tour.
 const RECEIVE_BUDGET_BYTES = 256 * MB;
+// Fréquence max des mises à jour de la progression d'un envoi.
+const PROGRESS_INTERVAL_MS = 250;
 
 let room = null;
 let me = null; // { id, name, maxSizeMb } : ce que les autres voient de moi
@@ -18,7 +20,7 @@ let media = null;
 const emit = (event, payload) => window.net.emit(event, payload);
 
 function publishMembers() {
-  emit('members', [...members.values()]);
+  emit('members', [...members].map(([peerId, m]) => ({ peerId, ...m })));
 }
 
 function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
@@ -81,27 +83,49 @@ function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
 function leave() {
   room?.leave();
   room = null;
+  hello = null;
+  media = null;
   members.clear();
 }
 
-async function send({ requestId, bytes, ext, text, imageSeconds }) {
+// Envoie à chaque ami séparément : un ami qui décroche n'empêche pas les autres de recevoir,
+// et l'envoyeur sait qui a reçu quoi.
+async function send(cmd) {
+  const { requestId, ext, text, imageSeconds } = cmd;
+  // Un Blob est lu morceau par morceau : trystero n'en fait pas une copie complète par ami.
+  const blob = new Blob([cmd.bytes]);
+  cmd.bytes = null;
   if (!room) return emit('sent', { requestId, ok: false, error: "Tu n'es pas dans un salon." });
-  const size = bytes.byteLength;
-  const targets = [];
-  const skipped = [];
-  for (const [peerId, member] of members) {
-    if (size <= member.maxSizeMb * MB) targets.push(peerId);
-    else skipped.push(member.name);
-  }
-  if (targets.length === 0) {
-    return emit('sent', { requestId, ok: true, delivered: 0, skipped });
-  }
-  try {
-    await media.send(bytes, { target: targets, metadata: { ext, text, imageSeconds } });
-    emit('sent', { requestId, ok: true, delivered: targets.length, skipped });
-  } catch (err) {
-    emit('sent', { requestId, ok: false, error: `Envoi interrompu (${err?.message ?? err}).` });
-  }
+
+  // Un ami parti entre-temps n'a rien reçu.
+  const targets = cmd.targets.filter((peerId) => members.has(peerId));
+  const failed = cmd.targets.filter((peerId) => !members.has(peerId));
+  const delivered = [];
+  const progress = new Map(targets.map((peerId) => [peerId, 0]));
+  let lastReport = 0;
+  const report = () => {
+    const now = Date.now();
+    if (now - lastReport < PROGRESS_INTERVAL_MS) return;
+    lastReport = now;
+    let sum = 0;
+    for (const value of progress.values()) sum += value;
+    emit('progress', { requestId, ratio: sum / progress.size });
+  };
+
+  const results = await Promise.allSettled(
+    targets.map((peerId) =>
+      media.send(blob, {
+        target: peerId,
+        metadata: { ext, text, imageSeconds },
+        onProgress: (ratio) => {
+          progress.set(peerId, ratio);
+          report();
+        },
+      }),
+    ),
+  );
+  results.forEach((r, i) => (r.status === 'fulfilled' ? delivered : failed).push(targets[i]));
+  emit('sent', { requestId, ok: true, delivered, failed });
 }
 
 // Pseudo ou limite changés : les autres membres sont prévenus. Les mutes restent locaux.
