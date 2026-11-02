@@ -9,11 +9,14 @@ const MB = 1024 * 1024;
 const RECEIVE_BUDGET_BYTES = 256 * MB;
 // Fréquence max des mises à jour de la progression d'un envoi.
 const PROGRESS_INTERVAL_MS = 250;
+// Un avertissement de connexion disparaît s'il ne se répète pas (l'ami a peut-être abandonné).
+const WARNING_MS = 2 * 60_000;
 
 let room = null;
 let me = null; // { id, name, maxSizeMb } : ce que les autres voient de moi
 let muted = new Set(); // identifiants des amis dont je refuse les médias (jamais envoyé)
 const members = new Map(); // peerId -> { id, name, maxSizeMb }
+const warnings = new Map(); // peerId -> { message, timer }
 let hello = null;
 let media = null;
 
@@ -21,6 +24,39 @@ const emit = (event, payload) => window.net.emit(event, payload);
 
 function publishMembers() {
   emit('members', [...members].map(([peerId, m]) => ({ peerId, ...m })));
+}
+
+function publishWarnings() {
+  emit('warnings', [...new Set([...warnings.values()].map((w) => w.message))]);
+}
+
+// Les erreurs de trystero sont en anglais technique : on les traduit pour l'interface.
+function describeError(error) {
+  const text = String(error?.message ?? error ?? '');
+  if (/could not connect|TURN|ICE/i.test(text)) {
+    return "Connexion directe impossible avec un ami : sa box ou son réseau (4G, entreprise, école) la bloque.";
+  }
+  if (/password|decrypt/i.test(text)) return "Un ami n'a pas pu être vérifié. Vérifiez que vous avez le même code.";
+  return 'Problème de connexion avec un ami.';
+}
+
+function warn(peerId, error) {
+  const key = peerId ?? '';
+  clearTimeout(warnings.get(key)?.timer);
+  const timer = setTimeout(() => {
+    warnings.delete(key);
+    publishWarnings();
+  }, WARNING_MS);
+  warnings.set(key, { message: describeError(error), timer });
+  publishWarnings();
+}
+
+function clearWarning(peerId) {
+  const warning = warnings.get(peerId);
+  if (!warning) return;
+  clearTimeout(warning.timer);
+  warnings.delete(peerId);
+  publishWarnings();
 }
 
 function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
@@ -37,7 +73,7 @@ function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
     },
     code,
     {
-      onJoinError: ({ error }) => emit('warning', String(error?.message ?? error ?? 'Connexion impossible.')),
+      onJoinError: ({ error, peerId }) => warn(peerId, error),
     },
   );
 
@@ -71,13 +107,17 @@ function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
     });
   };
 
-  room.onPeerJoin = (peerId) => hello.send(me, { target: peerId }).catch(() => {});
+  room.onPeerJoin = (peerId) => {
+    clearWarning(peerId);
+    hello.send(me, { target: peerId }).catch(() => {});
+  };
   room.onPeerLeave = (peerId) => {
     members.delete(peerId);
     publishMembers();
   };
 
   publishMembers();
+  publishWarnings();
 }
 
 function leave() {
@@ -86,6 +126,8 @@ function leave() {
   hello = null;
   media = null;
   members.clear();
+  for (const warning of warnings.values()) clearTimeout(warning.timer);
+  warnings.clear();
 }
 
 // Envoie à chaque ami séparément : un ami qui décroche n'empêche pas les autres de recevoir,

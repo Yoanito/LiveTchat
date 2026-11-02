@@ -122,6 +122,11 @@ code {
   font-size: 13px;
 }
 
+/* Un avertissement par ligne. */
+#roomHelp {
+  white-space: pre-line;
+}
+
 .error-text {
   color: var(--error);
   min-height: 0;

@@ -8,10 +8,11 @@ const {
   MAX_IMAGE_PIXELS,
   MAX_VIDEO_PIXELS,
   MAX_VIDEO_SECONDS,
+  DEFAULT_IMAGE_SECONDS,
 } = require('../protocol');
-const { clamp } = require('./util');
+const { clamp, parseNumber } = require('./util');
 const { mediaKind } = require('./files');
-const { zoneBounds } = require('./displays');
+const { zoneBounds, placeWindow } = require('./displays');
 
 let win = null;
 let getSettings = null;
@@ -88,7 +89,7 @@ function pump() {
   if (current || !ready || queue.length === 0 || !alive()) return;
   current = queue.shift();
   const s = getSettings();
-  win.setBounds(zoneBounds(s.displayId, s.zone));
+  placeWindow(win, zoneBounds(s.displayId, s.zone));
   win.setIgnoreMouseEvents(true);
   win.showInactive();
   win.setAlwaysOnTop(true, 'screen-saver');
@@ -145,7 +146,7 @@ function enqueue(file, { text, imageSeconds, onDone }) {
     url: pathToFileURL(file).href,
     kind: mediaKind(file),
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
-    durationMs: clamp(imageSeconds, 1, 30) * 1000,
+    durationMs: clamp(parseNumber(imageSeconds) ?? DEFAULT_IMAGE_SECONDS, 1, 30) * 1000,
     onDone,
   });
   pump();

@@ -2,6 +2,7 @@
 const { BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const { sanitizeZone } = require('./util');
+const { placeWindow } = require('./displays');
 
 let win = null;
 let current = null; // { zone, onSave }
@@ -26,6 +27,7 @@ function open({ bounds, zone, onSave }) {
       sandbox: true,
     },
   });
+  placeWindow(win, bounds);
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, '..', 'zone.html'));
   win.on('closed', () => {

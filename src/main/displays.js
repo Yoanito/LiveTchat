@@ -26,4 +26,15 @@ function zoneBounds(displayId, zone) {
   };
 }
 
-module.exports = { targetDisplay, listDisplays, zoneBounds };
+// Sous Windows, une fenêtre déplacée vers un écran d'une autre mise à l'échelle
+// (100 % → 150 %) peut garder la taille calculée pour l'ancien écran.
+// On vérifie et on applique une seconde fois si besoin.
+function placeWindow(win, bounds) {
+  win.setBounds(bounds);
+  const b = win.getBounds();
+  if (b.x !== bounds.x || b.y !== bounds.y || b.width !== bounds.width || b.height !== bounds.height) {
+    win.setBounds(bounds);
+  }
+}
+
+module.exports = { targetDisplay, listDisplays, zoneBounds, placeWindow };

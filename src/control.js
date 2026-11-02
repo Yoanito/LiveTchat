@@ -52,12 +52,10 @@ function showRoom(room) {
   if (!room) return;
 
   $('roomCode').textContent = room.code;
-  $('roomHelp').textContent =
-    room.members.length === 0
-      ? room.warning
-        ? `Connexion impossible avec un ami : ${room.warning}`
-        : 'En attente des amis… Ils doivent entrer le même code.'
-      : '';
+  // Les avertissements s'affichent même quand d'autres amis sont connectés.
+  const help = [...room.warnings];
+  if (room.members.length === 0 && help.length === 0) help.push('En attente des amis… Ils doivent entrer le même code.');
+  $('roomHelp').textContent = help.join('\n');
 
   const everyone = [{ id: null, name: `${$('name').value.trim() || 'Moi'} (toi)`, me: true }, ...room.members];
   $('members').replaceChildren(
@@ -97,7 +95,8 @@ $('fullZone').addEventListener('click', () => update({ zone: 'full' }));
 $('sound').addEventListener('change', (e) => update({ sound: e.target.checked }));
 $('volume').addEventListener('input', (e) => update({ volume: e.target.value / 100 }));
 $('opacity').addEventListener('input', (e) => update({ opacity: e.target.value / 100 }));
-$('maxSizeMb').addEventListener('change', (e) => update({ maxSizeMb: Number(e.target.value) }));
+// Valeur brute : un champ vidé est ignoré par le processus principal, pas ramené à 1 Mo.
+$('maxSizeMb').addEventListener('change', (e) => update({ maxSizeMb: e.target.value }));
 $('name').addEventListener('change', (e) => update({ name: e.target.value }));
 
 $('create').addEventListener('click', () => {
@@ -133,7 +132,7 @@ $('sendRoom').addEventListener('click', async () => {
   try {
     result = await api.sendToRoom({
       text: $('text').value,
-      imageSeconds: Number($('imageSeconds').value),
+      imageSeconds: $('imageSeconds').value,
     });
   } finally {
     sending = false;
@@ -210,7 +209,7 @@ $('pick').addEventListener('click', async () => {
 $('send').addEventListener('click', () => {
   const payload = {
     text: $('text').value,
-    imageSeconds: Number($('imageSeconds').value),
+    imageSeconds: $('imageSeconds').value,
   };
   const delay = Math.max(0, Number($('delay').value) || 0);
   setStatus(delay ? `Affichage dans ${delay} s…` : 'Envoi…');

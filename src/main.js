@@ -12,7 +12,7 @@ const {
   MAX_VIDEO_PIXELS,
   MAX_VIDEO_SECONDS,
 } = require('./protocol');
-const { clamp } = require('./main/util');
+const { clamp, parseNumber } = require('./main/util');
 const { checkFile } = require('./main/files');
 const { newRoomCode, normalizeCode } = require('./main/room-code');
 const settings = require('./main/settings');
@@ -78,11 +78,13 @@ ipcMain.handle('settings:get', (event) => {
 ipcMain.handle('settings:set', (event, patch) => {
   if (!fromControl(event)) return null;
   const s = settings.get();
-  if ('displayId' in patch) s.displayId = Number(patch.displayId);
+  // Un champ vidé garde l'ancienne valeur (la fenêtre la réaffiche).
+  const number = (key) => (key in patch ? parseNumber(patch[key]) : null);
+  if (number('displayId') !== null) s.displayId = number('displayId');
   if ('sound' in patch) s.sound = Boolean(patch.sound);
-  if ('volume' in patch) s.volume = clamp(patch.volume, 0, 1);
-  if ('opacity' in patch) s.opacity = clamp(patch.opacity, 0.1, 1);
-  if ('maxSizeMb' in patch) s.maxSizeMb = clamp(patch.maxSizeMb, 1, MAX_FILE_MB);
+  if (number('volume') !== null) s.volume = clamp(number('volume'), 0, 1);
+  if (number('opacity') !== null) s.opacity = clamp(number('opacity'), 0.1, 1);
+  if (number('maxSizeMb') !== null) s.maxSizeMb = clamp(number('maxSizeMb'), 1, MAX_FILE_MB);
   if ('name' in patch) s.name = String(patch.name).trim().slice(0, MAX_NAME_LENGTH);
   if (patch.zone === 'full') s.zone = { ...settings.DEFAULTS.zone };
   settings.save();
@@ -183,7 +185,13 @@ app.on('will-quit', () => settings.flush());
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => controlWin?.focus());
+  // Appli relancée alors qu'elle tourne déjà : on montre la fenêtre, même réduite.
+  app.on('second-instance', () => {
+    if (!controlWin) return;
+    if (controlWin.isMinimized()) controlWin.restore();
+    controlWin.show();
+    controlWin.focus();
+  });
 
   app.whenReady().then(() => {
     settings.load();

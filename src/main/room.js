@@ -4,8 +4,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { MEDIA_EXT, MAX_TEXT_LENGTH } = require('../protocol');
-const { clamp } = require('./util');
+const { MEDIA_EXT, MAX_TEXT_LENGTH, DEFAULT_IMAGE_SECONDS } = require('../protocol');
+const { clamp, parseNumber } = require('./util');
 
 const MB = 1024 * 1024;
 const settings = require('./settings');
@@ -62,6 +62,7 @@ function createWindow() {
     failPendingSends('La connexion a redémarré, renvoie le média.');
     if (room) {
       room.members = [];
+      room.warnings = [];
       notifyRoom();
     }
     setTimeout(() => win && !win.isDestroyed() && win.webContents.reload(), 1000);
@@ -115,7 +116,7 @@ function join(code) {
   recvDir = fs.mkdtempSync(path.join(tempRoot, 'recv-'));
   s.lastCode = code;
   settings.save();
-  room = { code, members: [], warning: null };
+  room = { code, members: [], warnings: [] };
   sendJoin();
   notifyRoom();
 }
@@ -186,7 +187,7 @@ async function send(file, size, { text, imageSeconds }) {
   if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
   const payload = {
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
-    imageSeconds: clamp(imageSeconds, 1, 30),
+    imageSeconds: clamp(parseNumber(imageSeconds) ?? DEFAULT_IMAGE_SECONDS, 1, 30),
   };
   // Je vois aussi ce que j'envoie.
   const shownHere = player.enqueue(file, payload) !== null;
@@ -227,8 +228,8 @@ ipcMain.on('net:event', (event, name, payload) => {
       maxSizeMb: Number(m.maxSizeMb) || 20,
     }));
     notifyRoom();
-  } else if (name === 'warning' && room) {
-    room.warning = payload;
+  } else if (name === 'warnings' && room) {
+    room.warnings = payload.slice(0, 5).map(String);
     notifyRoom();
   } else if (name === 'media') {
     receiveMedia(payload);
