@@ -24,3 +24,10 @@ test('normalize garde un identifiant d’écran et un identifiant client valides
   assert.equal(s.displayId, 2528732444);
   assert.equal(s.clientId, 'abc');
 });
+
+test('normalize garde le petit son et le dernier dossier', () => {
+  const s = normalize({ chime: false, lastDir: 'C:\\Images' });
+  assert.equal(s.chime, false);
+  assert.equal(s.lastDir, 'C:\\Images');
+  assert.equal(normalize({ lastDir: 3 }).lastDir, '');
+});

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('livetchat', {
   joinRoom: (code) => ipcRenderer.invoke('room:join', code),
   leaveRoom: () => ipcRenderer.invoke('room:leave'),
   sendToRoom: (payload) => ipcRenderer.invoke('room:send', payload),
+  cancelMine: () => ipcRenderer.invoke('media:cancel'),
   setMuted: (id, muted) => ipcRenderer.invoke('room:mute', { id, muted }),
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),
   onRoomChanged: (cb) => ipcRenderer.on('room:changed', (_e, room) => cb(room)),

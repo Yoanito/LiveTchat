@@ -2,6 +2,7 @@
 // L'overlay, le sélecteur de zone et le salon sont dans src/main/.
 const { app, BrowserWindow, ipcMain, screen, dialog, clipboard } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const {
   MEDIA_EXT,
@@ -82,6 +83,7 @@ ipcMain.handle('settings:set', (event, patch) => {
   const number = (key) => (key in patch ? parseNumber(patch[key]) : null);
   if (number('displayId') !== null) s.displayId = number('displayId');
   if ('sound' in patch) s.sound = Boolean(patch.sound);
+  if ('chime' in patch) s.chime = Boolean(patch.chime);
   if (number('volume') !== null) s.volume = clamp(number('volume'), 0, 1);
   if (number('opacity') !== null) s.opacity = clamp(number('opacity'), 0.1, 1);
   if (number('maxSizeMb') !== null) s.maxSizeMb = clamp(number('maxSizeMb'), 1, MAX_FILE_MB);
@@ -108,12 +110,17 @@ ipcMain.handle('zone:edit', (event) => {
 
 ipcMain.handle('media:pick', async (event) => {
   if (!fromControl(event)) return null;
+  // On rouvre le dernier dossier utilisé, s'il existe encore.
+  const { lastDir } = settings.get();
   const result = await dialog.showOpenDialog(controlWin, {
     properties: ['openFile'],
+    ...(lastDir && fs.existsSync(lastDir) ? { defaultPath: lastDir } : {}),
     filters: [{ name: 'Images et vidéos', extensions: MEDIA_EXT.map((e) => e.slice(1)) }],
   });
   if (result.canceled) return null;
   const file = result.filePaths[0];
+  settings.get().lastDir = path.dirname(file);
+  settings.save();
   const { error, size, kind } = checkFile(file, MAX_FILE_MB);
   selectedFile = error ? null : file;
   if (error) return { error };
@@ -121,11 +128,11 @@ ipcMain.handle('media:pick', async (event) => {
 });
 
 // Test local : affiche le média uniquement chez moi.
-ipcMain.handle('media:send', (event, { text, seconds }) => {
+ipcMain.handle('media:send', (event, { text, topText, seconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
   const { error } = checkFile(selectedFile, settings.get().maxSizeMb);
   if (error) return { ok: false, error };
-  const position = player.enqueue(selectedFile, { text, seconds });
+  const position = player.enqueue(selectedFile, { text, topText, seconds, from: room.myName(), mine: true });
   if (position === null) return { ok: false, error: "File d'attente pleine, réessaie dans un moment." };
   return { ok: true, position };
 });
@@ -150,12 +157,23 @@ ipcMain.handle('room:leave', (event) => {
 
 ipcMain.handle('room:get', (event) => (fromControl(event) ? room.get() : null));
 
-ipcMain.handle('room:send', (event, { text, seconds }) => {
+// to : null pour tout le salon, sinon les identifiants des amis choisis.
+ipcMain.handle('room:send', (event, { text, topText, seconds, to }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
   const { error, size } = checkFile(selectedFile, MAX_FILE_MB);
   if (error) return { ok: false, error };
-  return room.send(selectedFile, size, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), seconds });
+  const recipients = Array.isArray(to) ? to.filter((id) => typeof id === 'string').slice(0, 100) : null;
+  if (recipients && recipients.length === 0) return { ok: false, error: 'Choisis au moins une personne.' };
+  return room.send(selectedFile, size, {
+    text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
+    topText: String(topText ?? '').slice(0, MAX_TEXT_LENGTH),
+    seconds,
+    to: recipients,
+  });
 });
+
+// Retire tout de suite mes médias, chez moi et chez les amis, quel que soit le temps restant.
+ipcMain.handle('media:cancel', (event) => (fromControl(event) ? room.cancelMine() : null));
 
 ipcMain.handle('room:mute', (event, { id, muted }) => {
   if (!fromControl(event)) return null;

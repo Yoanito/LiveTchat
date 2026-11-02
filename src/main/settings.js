@@ -11,6 +11,8 @@ const DEFAULTS = {
   // Zone en fractions de l'écran (0 à 1), pour rester valable quel que soit le DPI.
   zone: { x: 0, y: 0, width: 1, height: 1 },
   sound: true,
+  // Petit son quand un média s'affiche, pour ne pas le louper.
+  chime: true,
   volume: 0.5,
   opacity: 1,
   // Taille max des médias que j'accepte de recevoir.
@@ -19,6 +21,8 @@ const DEFAULTS = {
   clientId: null,
   lastCode: '',
   muted: [],
+  // Dernier dossier ouvert pour choisir un média.
+  lastDir: '',
 };
 
 // Les curseurs envoient des dizaines de changements par seconde : on n'écrit qu'une fois arrêté.
@@ -39,6 +43,7 @@ function normalize(saved) {
     displayId: Number.isFinite(displayId) ? displayId : null,
     zone: sanitizeZone({ ...DEFAULTS.zone, ...s.zone }),
     sound: 'sound' in s ? Boolean(s.sound) : DEFAULTS.sound,
+    chime: 'chime' in s ? Boolean(s.chime) : DEFAULTS.chime,
     volume: 'volume' in s ? clamp(s.volume, 0, 1) : DEFAULTS.volume,
     opacity: 'opacity' in s ? clamp(s.opacity, 0.1, 1) : DEFAULTS.opacity,
     maxSizeMb: 'maxSizeMb' in s ? clamp(s.maxSizeMb, 1, MAX_FILE_MB) : DEFAULTS.maxSizeMb,
@@ -46,6 +51,7 @@ function normalize(saved) {
     clientId: typeof s.clientId === 'string' && s.clientId ? s.clientId : null,
     lastCode: typeof s.lastCode === 'string' ? s.lastCode : '',
     muted: Array.isArray(s.muted) ? s.muted.filter((id) => typeof id === 'string') : [],
+    lastDir: typeof s.lastDir === 'string' ? s.lastDir : '',
   };
 }
 

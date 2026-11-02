@@ -5,7 +5,10 @@ Application Windows pour afficher une image ou une vidéo, avec ou sans texte, e
 ## Ce que fait l'appli
 
 - **Salon** : l'un des amis clique sur « Créer un salon » et obtient un code du type `k7p2-x9qd-4mzt-wb3h`. Les autres l'entrent dans « Rejoindre ». Il n'y a pas d'hôte : le salon existe tant qu'au moins une personne y est.
-- **Envoi** : on choisit une image ou une vidéo, un texte optionnel, la durée d'affichage (1 à 30 s, pour une image comme pour une vidéo : une vidéo plus longue est coupée), et « Envoyer au salon ». Choisir une vidéo remplit la durée avec sa longueur, qu'on peut raccourcir. Le fichier part directement de ton PC vers celui de chaque ami, qui l'affiche dès qu'il l'a reçu. La progression s'affiche, puis qui l'a reçu et qui ne l'a pas reçu.
+- **Envoi** : on choisit une image ou une vidéo (la fenêtre s'ouvre dans le dernier dossier utilisé), un texte en haut et/ou en bas, optionnels, la durée d'affichage (1 à 30 s, pour une image comme pour une vidéo : une vidéo plus longue est coupée), et « Envoyer au salon ». Choisir une vidéo remplit la durée avec sa longueur, qu'on peut raccourcir. Le fichier part directement de ton PC vers celui de chaque ami, qui l'affiche dès qu'il l'a reçu. La progression s'affiche, puis qui l'a reçu et qui ne l'a pas reçu. Le pseudo de l'envoyeur apparaît en haut à gauche du média.
+- **Destinataires** : par défaut tout le salon. En décochant « Tout le salon », on coche les personnes qui doivent le recevoir.
+- **Annuler** : « Annuler mon média » retire tout de suite tes médias affichés ou en attente, chez toi et chez les amis, quel que soit le temps restant. Un média encore en cours de transfert est jeté à son arrivée.
+- **Petit son** : un « pop » léger quand un média s'affiche, pour ne pas le louper. Désactivable dans « Affichage chez moi », il suit le réglage de volume.
 - **Mute par personne** : une case à cocher à côté de chaque membre. Le choix est mémorisé, et les médias de cette personne ne sont même plus téléchargés.
 - **Affichage** : écran et zone au choix (plein écran ou rectangle dessiné à la souris), son, volume, opacité. Les médias arrivés en même temps passent l'un après l'autre, 10 au maximum en attente.
 - **Overlay** : fenêtre transparente, toujours au-dessus, traversée par les clics, qui ne prend jamais le focus et n'apparaît ni dans la barre des tâches ni dans Alt+Tab.

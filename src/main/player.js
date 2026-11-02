@@ -4,6 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const {
   MAX_TEXT_LENGTH,
+  MAX_NAME_LENGTH,
   MAX_QUEUE,
   MAX_IMAGE_PIXELS,
   MAX_VIDEO_PIXELS,
@@ -22,7 +23,9 @@ let onQueueChanged = () => {};
 const WATCHDOG_MARGIN_MS = 10_000;
 const RELOAD_DELAY_MS = 1000;
 
-// Chaque élément : { id, file, url, kind, text, durationMs, onDone? }.
+// Chaque élément : { id, file, url, kind, text, topText, from, fromId, sendId, mine, durationMs, onDone? }.
+// from : pseudo de l'envoyeur, affiché sur le média. fromId et sendId servent à annuler un envoi.
+// mine : média que j'ai envoyé (ou testé chez moi), que je peux annuler.
 // onDone est appelé quand le média a été affiché ou retiré de la file.
 const queue = [];
 let current = null;
@@ -107,10 +110,13 @@ function pump() {
     url: current.url,
     kind: current.kind,
     text: current.text,
+    topText: current.topText,
+    from: current.from,
     durationMs: current.durationMs,
     maxImagePixels: MAX_IMAGE_PIXELS,
     maxVideoPixels: MAX_VIDEO_PIXELS,
     sound: s.sound,
+    chime: s.chime,
     volume: s.volume,
     opacity: s.opacity,
   });
@@ -132,7 +138,7 @@ function finishCurrent() {
 
 // Ajoute un média à la file. Renvoie sa position (0 s'il s'affiche tout de suite),
 // ou null si la file est pleine : le média est alors ignoré.
-function enqueue(file, { text, seconds, onDone }) {
+function enqueue(file, { text, topText, from, fromId = null, sendId = null, mine = false, seconds, onDone }) {
   if (queue.length >= MAX_QUEUE) {
     onDone?.();
     return null;
@@ -144,6 +150,11 @@ function enqueue(file, { text, seconds, onDone }) {
     url: pathToFileURL(file).href,
     kind: mediaKind(file),
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
+    topText: String(topText ?? '').slice(0, MAX_TEXT_LENGTH),
+    from: String(from ?? '').slice(0, MAX_NAME_LENGTH),
+    fromId,
+    sendId,
+    mine,
     durationMs: clamp(parseNumber(seconds) ?? DEFAULT_DISPLAY_SECONDS, 1, MAX_DISPLAY_SECONDS) * 1000,
     onDone,
   });
@@ -152,15 +163,22 @@ function enqueue(file, { text, seconds, onDone }) {
 }
 
 // Retire de la file (et coupe s'il est affiché) chaque média qui vérifie la condition.
+// Renvoie le nombre de médias retirés.
 function drop(predicate) {
+  let count = 0;
   for (let i = queue.length - 1; i >= 0; i--) {
-    if (predicate(queue[i])) queue.splice(i, 1)[0].onDone?.();
+    if (predicate(queue[i])) {
+      queue.splice(i, 1)[0].onDone?.();
+      count += 1;
+    }
   }
   if (current && predicate(current)) {
+    count += 1;
     if (alive()) win.webContents.send('overlay:stop');
     finishCurrent();
   }
   onQueueChanged(queue.length);
+  return count;
 }
 
 ipcMain.on('overlay:done', (event, id) => {

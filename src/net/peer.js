@@ -19,6 +19,7 @@ const members = new Map(); // peerId -> { id, name, maxSizeMb }
 const warnings = new Map(); // peerId -> { message, timer }
 let hello = null;
 let media = null;
+let cancel = null;
 
 const emit = (event, payload) => window.net.emit(event, payload);
 
@@ -102,10 +103,21 @@ function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
       bytes: data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
       ext: metadata?.ext,
       text: metadata?.text,
+      topText: metadata?.topText,
+      sendId: metadata?.sendId,
       seconds: metadata?.seconds,
       imageSeconds: metadata?.imageSeconds,
       from: { id: from.id, name: from.name },
     });
+  };
+
+  // Un ami annule ses envois récents. Seuls les siens sont retirés : son identifiant
+  // vient de la connexion, pas du message.
+  cancel = room.makeAction('cancel');
+  cancel.onMessage = (data, { peerId }) => {
+    const from = members.get(peerId);
+    if (!from || !Array.isArray(data?.sendIds)) return;
+    emit('cancel', { fromId: from.id, sendIds: data.sendIds.slice(0, 50).map(String) });
   };
 
   room.onPeerJoin = (peerId) => {
@@ -126,6 +138,7 @@ function leave() {
   room = null;
   hello = null;
   media = null;
+  cancel = null;
   members.clear();
   for (const warning of warnings.values()) clearTimeout(warning.timer);
   warnings.clear();
@@ -134,7 +147,7 @@ function leave() {
 // Envoie à chaque ami séparément : un ami qui décroche n'empêche pas les autres de recevoir,
 // et l'envoyeur sait qui a reçu quoi.
 async function send(cmd) {
-  const { requestId, ext, text, seconds } = cmd;
+  const { requestId, ext, text, topText, sendId, seconds } = cmd;
   // Un Blob est lu morceau par morceau : trystero n'en fait pas une copie complète par ami.
   const blob = new Blob([cmd.bytes]);
   cmd.bytes = null;
@@ -160,7 +173,8 @@ async function send(cmd) {
       media.send(blob, {
         target: peerId,
         // imageSeconds : pour les amis qui ont encore l'ancienne version.
-        metadata: { ext, text, seconds, imageSeconds: seconds },
+        // topText et sendId sont ignorés par l'ancienne version (texte du bas seulement).
+        metadata: { ext, text, topText, sendId, seconds, imageSeconds: seconds },
         onProgress: (ratio) => {
           progress.set(peerId, ratio);
           report();
@@ -186,4 +200,5 @@ window.net.onCommand((cmd) => {
   else if (cmd.type === 'leave') leave();
   else if (cmd.type === 'send') send(cmd);
   else if (cmd.type === 'profile') updateProfile(cmd);
+  else if (cmd.type === 'cancel' && cancel) cancel.send({ sendIds: cmd.sendIds }).catch(() => {});
 });

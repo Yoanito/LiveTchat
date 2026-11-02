@@ -7,6 +7,12 @@ let fileReady = false;
 let currentRoom = null;
 let sending = false;
 let muted = new Set();
+// Destinataires choisis quand « Tout le salon » est décoché (identifiants des amis).
+// Gardés si un ami se déconnecte : il est de nouveau coché s'il revient.
+const chosen = new Set();
+// Numéro de l'envoi en cours, pour savoir s'il a été annulé avant la fin.
+let sendCount = 0;
+let canceledSend = 0;
 
 function fillDisplays(displays, currentId) {
   const select = $('display');
@@ -29,6 +35,7 @@ function showSettings(s) {
       ? 'plein écran'
       : `${pct(z.width)} × ${pct(z.height)} à partir de (${pct(z.x)}, ${pct(z.y)})`;
   $('sound').checked = s.sound;
+  $('chime').checked = s.chime;
   $('volume').value = Math.round(s.volume * 100);
   $('volumeOut').textContent = `${$('volume').value} %`;
   $('opacity').value = Math.round(s.opacity * 100);
@@ -38,16 +45,55 @@ function showSettings(s) {
   muted = new Set(s.muted);
 }
 
+// null : tout le salon. Sinon les amis cochés qui sont encore là.
+function recipients() {
+  if ($('toAll').checked || !currentRoom) return null;
+  return currentRoom.members.filter((m) => chosen.has(m.id)).map((m) => m.id);
+}
+
 function refreshButtons() {
+  const to = recipients();
   // Désactivé pendant un envoi : un double-clic enverrait le fichier deux fois.
-  $('sendRoom').disabled = !currentRoom || !fileReady || sending;
+  $('sendRoom').disabled = !currentRoom || !fileReady || sending || (to !== null && to.length === 0);
+  $('sendRoom').textContent =
+    to === null ? 'Envoyer au salon' : `Envoyer à ${to.length} personne${to.length > 1 ? 's' : ''}`;
   $('send').disabled = !fileReady;
+}
+
+function showRecipients(room) {
+  $('recipients').hidden = !room;
+  $('recipientList').hidden = !room || $('toAll').checked;
+  if (!room) return;
+  const items = room.members.map((m) => {
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'inline';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = chosen.has(m.id);
+    box.addEventListener('change', () => {
+      if (box.checked) chosen.add(m.id);
+      else chosen.delete(m.id);
+      refreshButtons();
+    });
+    label.append(box, m.name);
+    li.append(label);
+    return li;
+  });
+  if (items.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'help';
+    li.textContent = 'Personne pour le moment.';
+    items.push(li);
+  }
+  $('recipientList').replaceChildren(...items);
 }
 
 function showRoom(room) {
   currentRoom = room;
   $('roomOut').hidden = Boolean(room);
   $('roomIn').hidden = !room;
+  showRecipients(room);
   refreshButtons();
   if (!room) return;
 
@@ -93,6 +139,11 @@ $('display').addEventListener('change', (e) => update({ displayId: Number(e.targ
 $('editZone').addEventListener('click', () => api.editZone());
 $('fullZone').addEventListener('click', () => update({ zone: 'full' }));
 $('sound').addEventListener('change', (e) => update({ sound: e.target.checked }));
+$('chime').addEventListener('change', (e) => update({ chime: e.target.checked }));
+$('toAll').addEventListener('change', () => {
+  showRecipients(currentRoom);
+  refreshButtons();
+});
 $('volume').addEventListener('input', (e) => update({ volume: e.target.value / 100 }));
 $('opacity').addEventListener('input', (e) => update({ opacity: e.target.value / 100 }));
 // Valeur brute : un champ vidé est ignoré par le processus principal, pas ramené à 1 Mo.
@@ -126,18 +177,22 @@ function describeSend({ delivered, failed, skipped, shownHere }) {
 
 $('sendRoom').addEventListener('click', async () => {
   sending = true;
+  const thisSend = ++sendCount;
   refreshButtons();
   setStatus('Envoi…');
   let result;
   try {
     result = await api.sendToRoom({
       text: $('text').value,
+      topText: $('topText').value,
       seconds: $('seconds').value,
+      to: recipients(),
     });
   } finally {
     sending = false;
     refreshButtons();
   }
+  if (canceledSend === thisSend) return setStatus('Média annulé.');
   if (!result.ok) return setStatus(result.error, true);
   setStatus(describeSend(result), result.failed.length > 0);
 });
@@ -228,9 +283,17 @@ $('pick').addEventListener('click', async () => {
   refreshButtons();
 });
 
+$('cancelMine').addEventListener('click', async () => {
+  if (sending) canceledSend = sendCount;
+  const { local, remote } = await api.cancelMine();
+  if (local === 0 && remote === 0 && !sending) return setStatus('Aucun média à annuler.');
+  setStatus(remote > 0 ? 'Média annulé, chez toi et chez les amis.' : 'Média annulé.');
+});
+
 $('send').addEventListener('click', () => {
   const payload = {
     text: $('text').value,
+    topText: $('topText').value,
     seconds: $('seconds').value,
   };
   const delay = Math.max(0, Number($('delay').value) || 0);

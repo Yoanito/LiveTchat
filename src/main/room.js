@@ -29,6 +29,15 @@ const pendingSends = new Map();
 let tempRoot = null;
 let recvDir = null;
 
+// Mes envois récents, que « Annuler » peut encore retirer chez les amis :
+// 10 médias en file × 30 s, plus le temps du transfert.
+const CANCELABLE_MS = 10 * 60_000;
+let recentSends = []; // { sendId, at }
+// Envois annulés par leurs auteurs (« fromId:sendId ») : un média annulé qui arrive
+// en retard (transfert encore en cours au moment de l'annulation) est jeté.
+const canceled = new Set();
+const MAX_CANCELED = 500;
+
 // Retente l'effacement : sous Windows, un fichier encore ouvert ne s'efface pas tout de suite.
 const RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
 
@@ -123,6 +132,8 @@ function join(code) {
   s.lastCode = code;
   settings.save();
   room = { code, members: [], warnings: [] };
+  recentSends = [];
+  canceled.clear();
   sendJoin();
   notifyRoom();
 }
@@ -163,10 +174,14 @@ function receivedSeconds({ seconds, imageSeconds }, ext) {
   return VIDEO_EXT.includes(ext) ? MAX_DISPLAY_SECONDS : imageSeconds;
 }
 
-function receiveMedia({ bytes, ext, text, seconds, imageSeconds, from }) {
+const cancelKey = (fromId, sendId) => `${fromId}:${sendId}`;
+
+function receiveMedia({ bytes, ext, text, topText, seconds, imageSeconds, sendId, from }) {
   const s = settings.get();
   if (!room || !recvDir || !(bytes instanceof Uint8Array)) return;
   if (s.muted.includes(from?.id)) return;
+  const id = typeof sendId === 'string' ? sendId.slice(0, 64) : null;
+  if (id && canceled.has(cancelKey(from.id, id))) return;
   const safeExt = String(ext ?? '').toLowerCase();
   if (!MEDIA_EXT.includes(safeExt)) return;
   if (bytes.byteLength > s.maxSizeMb * MB) return;
@@ -176,9 +191,15 @@ function receiveMedia({ bytes, ext, text, seconds, imageSeconds, from }) {
     if (err) return;
     // Salon quitté pendant l'écriture.
     if (recvDir !== dir) return fs.rm(file, RM_OPTIONS, () => {});
+    // Annulé par son envoyeur pendant l'écriture.
+    if (id && canceled.has(cancelKey(from.id, id))) return fs.rm(file, RM_OPTIONS, () => {});
     // Effacé dès qu'il a été affiché (ou ignoré si la file est pleine).
     player.enqueue(file, {
       text,
+      topText,
+      from: from.name,
+      fromId: from.id,
+      sendId: id,
       seconds: receivedSeconds({ seconds, imageSeconds }, safeExt),
       onDone: () => fs.rm(file, RM_OPTIONS, () => {}),
     });
@@ -199,28 +220,60 @@ async function transmit(file, requestId, targets, payload) {
   });
 }
 
-// Envoie un média à chaque membre qui l'accepte. Le résultat est donné par ami.
-async function send(file, size, { text, seconds }) {
+// Un ami annule ses envois : ses médias en attente ou affichés disparaissent tout de suite.
+function receiveCancel({ fromId, sendIds }) {
+  if (!room || typeof fromId !== 'string' || !Array.isArray(sendIds)) return;
+  const ids = new Set(sendIds.filter((id) => typeof id === 'string').slice(0, 50));
+  for (const id of ids) canceled.add(cancelKey(fromId, id));
+  // Garde la mémoire des annulations bornée : les plus anciennes partent d'abord.
+  for (const key of canceled) {
+    if (canceled.size <= MAX_CANCELED) break;
+    canceled.delete(key);
+  }
+  player.drop((item) => item.fromId === fromId && ids.has(item.sendId));
+}
+
+// Retire mes médias chez moi et, si je suis dans un salon, chez les amis qui les ont reçus.
+// Renvoie le nombre de médias retirés chez moi et le nombre d'envois annulés chez les autres.
+function cancelMine() {
+  const local = player.drop((item) => item.mine);
+  const now = Date.now();
+  const sendIds = recentSends.filter((r) => now - r.at < CANCELABLE_MS).map((r) => r.sendId);
+  recentSends = [];
+  if (room && sendIds.length) command({ type: 'cancel', sendIds });
+  return { local, remote: room ? sendIds.length : 0 };
+}
+
+// Envoie un média à chaque membre qui l'accepte (ou seulement à ceux de « to »,
+// une liste d'identifiants). Le résultat est donné par ami.
+async function send(file, size, { text, topText, seconds, to }) {
   if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
+  const sendId = crypto.randomUUID();
   const payload = {
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
+    topText: String(topText ?? '').slice(0, MAX_TEXT_LENGTH),
     seconds: clamp(parseNumber(seconds) ?? DEFAULT_DISPLAY_SECONDS, 1, MAX_DISPLAY_SECONDS),
   };
+  const members = to ? room.members.filter((m) => to.includes(m.id)) : room.members;
+  if (to && members.length === 0) {
+    return { ok: false, error: 'Les personnes choisies ont quitté le salon.' };
+  }
   // Je vois aussi ce que j'envoie.
-  const shownHere = player.enqueue(file, payload) !== null;
-  const members = room.members;
+  const shownHere = player.enqueue(file, { ...payload, from: myName(), mine: true }) !== null;
   const targets = members.filter((m) => size <= m.maxSizeMb * MB);
   const skipped = members.filter((m) => !targets.includes(m)).map((m) => m.name);
   // Personne ne peut le recevoir : inutile de lire le fichier.
   if (targets.length === 0) return { ok: true, delivered: [], failed: [], skipped, shownHere };
   if (!ready) return { ok: false, error: 'La connexion redémarre, réessaie dans quelques secondes.' };
 
-  const requestId = crypto.randomUUID();
-  const result = new Promise((resolve) => pendingSends.set(requestId, { resolve }));
+  // L'identifiant de l'envoi sert aussi à l'annuler chez les amis.
+  const now = Date.now();
+  recentSends = [...recentSends.filter((r) => now - r.at < CANCELABLE_MS), { sendId, at: now }];
+  const result = new Promise((resolve) => pendingSends.set(sendId, { resolve }));
   try {
-    await transmit(file, requestId, targets.map((m) => m.peerId), payload);
+    await transmit(file, sendId, targets.map((m) => m.peerId), { ...payload, sendId });
   } catch (err) {
-    pendingSends.delete(requestId);
+    pendingSends.delete(sendId);
     return { ok: false, error: `Lecture du fichier impossible (${err.message}).` };
   }
   const outcome = await result;
@@ -250,6 +303,8 @@ ipcMain.on('net:event', (event, name, payload) => {
     notifyRoom();
   } else if (name === 'media') {
     receiveMedia(payload);
+  } else if (name === 'cancel') {
+    receiveCancel(payload);
   } else if (name === 'progress') {
     if (pendingSends.has(payload.requestId)) notify('send:progress', clamp(payload.ratio, 0, 1));
   } else if (name === 'sent') {
@@ -268,4 +323,4 @@ function init(deps) {
   createWindow();
 }
 
-module.exports = { init, get, join, leave, send, updateProfile };
+module.exports = { init, get, join, leave, send, cancelMine, updateProfile, myName };

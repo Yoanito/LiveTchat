@@ -48,7 +48,8 @@
       <button id="editZone">Définir la zone</button>
       <button id="fullZone">Plein écran</button>
     </p>
-    <label class="inline"><input type="checkbox" id="sound"> Son</label>
+    <label class="inline"><input type="checkbox" id="sound"> Son des vidéos</label>
+    <label class="inline"><input type="checkbox" id="chime"> Petit son quand un média arrive</label>
     <label>Volume <output id="volumeOut"></output>
       <input type="range" id="volume" min="0" max="100" step="1">
     </label>
@@ -67,14 +68,25 @@
       <span id="fileName">Aucun fichier</span>
     </p>
     <p id="fileNote" class="help" hidden></p>
-    <label>Texte (optionnel)
-      <input type="text" id="text" maxlength="200" placeholder="Ton message">
+    <label>Texte en haut (optionnel)
+      <input type="text" id="topText" maxlength="200" placeholder="Texte en haut">
+    </label>
+    <label>Texte en bas (optionnel)
+      <input type="text" id="text" maxlength="200" placeholder="Texte en bas">
     </label>
     <label>Durée d'affichage (s), image ou vidéo
       <input type="number" id="seconds" min="1" max="30" value="5">
     </label>
     <p class="help">Une vidéo plus longue est coupée à cette durée. 30 s au maximum.</p>
-    <button id="sendRoom" class="primary" disabled>Envoyer au salon</button>
+    <fieldset id="recipients" hidden>
+      <legend>Envoyer à</legend>
+      <label class="inline"><input type="checkbox" id="toAll" checked> Tout le salon</label>
+      <ul id="recipientList" hidden></ul>
+    </fieldset>
+    <p class="actions">
+      <button id="sendRoom" class="primary" disabled>Envoyer au salon</button>
+      <button id="cancelMine" title="Retire tout de suite ton média de l'écran de tout le monde">Annuler mon média</button>
+    </p>
     <details>
       <summary>Tester seulement chez moi</summary>
       <label>Délai avant affichage (s), le temps de revenir en jeu
