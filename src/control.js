@@ -132,7 +132,7 @@ $('sendRoom').addEventListener('click', async () => {
   try {
     result = await api.sendToRoom({
       text: $('text').value,
-      imageSeconds: $('imageSeconds').value,
+      seconds: $('seconds').value,
     });
   } finally {
     sending = false;
@@ -178,13 +178,33 @@ function judge(kind, info) {
     return { notes: [size] };
   }
   if (pixels > limits.maxVideoPixels) return { error: `Vidéo trop grande (${size}). Maximum 3840 × 2160.` };
-  const notes = [size, `${Math.round(info.seconds)} s`];
-  if (info.seconds > limits.maxVideoSeconds) {
-    notes.push(`seules les ${limits.maxVideoSeconds} premières secondes seront affichées, mais tout le fichier est envoyé`);
+  // Certains fichiers WebM n'indiquent pas leur durée (Infinity) : on ne l'affiche pas.
+  const notes = Number.isFinite(info.seconds) ? [size, `${Math.round(info.seconds)} s`] : [size];
+  if (info.seconds > limits.maxDisplaySeconds) {
+    notes.push(`coupée à ${limits.maxDisplaySeconds} s au plus, mais tout le fichier est envoyé`);
   }
   if (Math.min(info.width, info.height) > 1440) notes.push('vidéo 4K, lourde à afficher pendant un jeu');
   return { notes };
 }
+
+// Une vidéo choisie remplit la durée avec sa longueur (30 s max), qu'on peut ensuite raccourcir.
+// Si on revient à une image, la durée reprend la valeur d'avant.
+let secondsBeforeVideo = null;
+function prefillSeconds(kind, info) {
+  const field = $('seconds');
+  if (kind === 'video') {
+    secondsBeforeVideo ??= field.value;
+    const length = Number.isFinite(info.seconds) ? Math.ceil(info.seconds) : limits.maxDisplaySeconds;
+    field.value = Math.max(1, Math.min(limits.maxDisplaySeconds, length));
+  } else if (secondsBeforeVideo !== null) {
+    field.value = secondsBeforeVideo;
+    secondsBeforeVideo = null;
+  }
+}
+// Durée changée à la main : elle n'est plus remplacée.
+$('seconds').addEventListener('input', () => {
+  secondsBeforeVideo = null;
+});
 
 $('pick').addEventListener('click', async () => {
   const picked = await api.pickMedia();
@@ -197,8 +217,10 @@ $('pick').addEventListener('click', async () => {
     return setStatus(picked.error, true);
   }
   $('fileName').textContent = picked.name;
-  const { error, notes } = judge(picked.kind, await probe(picked));
+  const info = await probe(picked);
+  const { error, notes } = judge(picked.kind, info);
   if (error) return setStatus(error, true);
+  prefillSeconds(picked.kind, info);
   setStatus('');
   $('fileNote').textContent = `${(picked.size / 1024 / 1024).toFixed(1)} Mo · ${notes.join(' · ')}`;
   $('fileNote').hidden = false;
@@ -209,7 +231,7 @@ $('pick').addEventListener('click', async () => {
 $('send').addEventListener('click', () => {
   const payload = {
     text: $('text').value,
-    imageSeconds: $('imageSeconds').value,
+    seconds: $('seconds').value,
   };
   const delay = Math.max(0, Number($('delay').value) || 0);
   setStatus(delay ? `Affichage dans ${delay} s…` : 'Envoi…');

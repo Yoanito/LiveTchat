@@ -5,7 +5,7 @@ Application Windows pour afficher une image ou une vidéo, avec ou sans texte, e
 ## Ce que fait l'appli
 
 - **Salon** : l'un des amis clique sur « Créer un salon » et obtient un code du type `k7p2-x9qd-4mzt-wb3h`. Les autres l'entrent dans « Rejoindre ». Il n'y a pas d'hôte : le salon existe tant qu'au moins une personne y est.
-- **Envoi** : on choisit une image ou une vidéo, un texte optionnel, et « Envoyer au salon ». Le fichier part directement de ton PC vers celui de chaque ami, qui l'affiche dès qu'il l'a reçu. La progression s'affiche, puis qui l'a reçu et qui ne l'a pas reçu.
+- **Envoi** : on choisit une image ou une vidéo, un texte optionnel, la durée d'affichage (1 à 30 s, pour une image comme pour une vidéo : une vidéo plus longue est coupée), et « Envoyer au salon ». Choisir une vidéo remplit la durée avec sa longueur, qu'on peut raccourcir. Le fichier part directement de ton PC vers celui de chaque ami, qui l'affiche dès qu'il l'a reçu. La progression s'affiche, puis qui l'a reçu et qui ne l'a pas reçu.
 - **Mute par personne** : une case à cocher à côté de chaque membre. Le choix est mémorisé, et les médias de cette personne ne sont même plus téléchargés.
 - **Affichage** : écran et zone au choix (plein écran ou rectangle dessiné à la souris), son, volume, opacité. Les médias arrivés en même temps passent l'un après l'autre, 10 au maximum en attente.
 - **Overlay** : fenêtre transparente, toujours au-dessus, traversée par les clics, qui ne prend jamais le focus et n'apparaît ni dans la barre des tâches ni dans Alt+Tab.
@@ -14,7 +14,7 @@ Formats acceptés : PNG, JPEG, WebP, GIF, MP4 (H.264), WebM. Limites, pour ne pa
 
 - 100 Mo par fichier ;
 - images de 40 mégapixels au plus (une petite image PNG peut cacher des dimensions énormes, qui prendraient des centaines de Mo de RAM une fois affichées) ;
-- vidéos en 4K (3840 × 2160) au plus, coupées à 30 s.
+- vidéos en 4K (3840 × 2160) au plus, affichées 30 s au maximum.
 
 L'appli vérifie le fichier dès qu'on le choisit, et l'overlay revérifie avant d'afficher.
 

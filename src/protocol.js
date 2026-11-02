@@ -16,9 +16,11 @@ module.exports = {
   MAX_IMAGE_PIXELS: 40_000_000,
   // Au-delà de la 4K, une vidéo charge trop la carte graphique pendant un jeu.
   MAX_VIDEO_PIXELS: 3840 * 2160,
-  MAX_VIDEO_SECONDS: 30,
-  // Durée d'affichage d'une image quand le champ est vide.
-  DEFAULT_IMAGE_SECONDS: 5,
+  // Durée d'affichage choisie par l'envoyeur, pour une image comme pour une vidéo :
+  // une vidéo plus longue est coupée, une plus courte s'arrête à sa fin.
+  MAX_DISPLAY_SECONDS: 30,
+  // Durée quand le champ est vide.
+  DEFAULT_DISPLAY_SECONDS: 5,
   // Médias en attente d'affichage, au-delà les nouveaux sont ignorés.
   MAX_QUEUE: 10,
 };

@@ -7,8 +7,8 @@ const {
   MAX_QUEUE,
   MAX_IMAGE_PIXELS,
   MAX_VIDEO_PIXELS,
-  MAX_VIDEO_SECONDS,
-  DEFAULT_IMAGE_SECONDS,
+  MAX_DISPLAY_SECONDS,
+  DEFAULT_DISPLAY_SECONDS,
 } = require('../protocol');
 const { clamp, parseNumber } = require('./util');
 const { mediaKind } = require('./files');
@@ -94,7 +94,6 @@ function pump() {
   win.showInactive();
   win.setAlwaysOnTop(true, 'screen-saver');
   keepOnTop(true);
-  const limitMs = current.kind === 'image' ? current.durationMs : MAX_VIDEO_SECONDS * 1000;
   // Pas de réponse à temps : la page est bloquée ou cassée. On l'arrête,
   // elle est rechargée comme après un plantage et la file reprend.
   watchdog = setTimeout(() => {
@@ -102,14 +101,13 @@ function pump() {
     ready = false;
     finishCurrent();
     if (alive()) win.webContents.forcefullyCrashRenderer();
-  }, limitMs + WATCHDOG_MARGIN_MS);
+  }, current.durationMs + WATCHDOG_MARGIN_MS);
   win.webContents.send('overlay:media', {
     id: current.id,
     url: current.url,
     kind: current.kind,
     text: current.text,
     durationMs: current.durationMs,
-    maxVideoMs: MAX_VIDEO_SECONDS * 1000,
     maxImagePixels: MAX_IMAGE_PIXELS,
     maxVideoPixels: MAX_VIDEO_PIXELS,
     sound: s.sound,
@@ -134,7 +132,7 @@ function finishCurrent() {
 
 // Ajoute un média à la file. Renvoie sa position (0 s'il s'affiche tout de suite),
 // ou null si la file est pleine : le média est alors ignoré.
-function enqueue(file, { text, imageSeconds, onDone }) {
+function enqueue(file, { text, seconds, onDone }) {
   if (queue.length >= MAX_QUEUE) {
     onDone?.();
     return null;
@@ -146,7 +144,7 @@ function enqueue(file, { text, imageSeconds, onDone }) {
     url: pathToFileURL(file).href,
     kind: mediaKind(file),
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
-    durationMs: clamp(parseNumber(imageSeconds) ?? DEFAULT_IMAGE_SECONDS, 1, 30) * 1000,
+    durationMs: clamp(parseNumber(seconds) ?? DEFAULT_DISPLAY_SECONDS, 1, MAX_DISPLAY_SECONDS) * 1000,
     onDone,
   });
   pump();

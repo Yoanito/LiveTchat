@@ -4,7 +4,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { MEDIA_EXT, MAX_TEXT_LENGTH, DEFAULT_IMAGE_SECONDS } = require('../protocol');
+const {
+  MEDIA_EXT,
+  VIDEO_EXT,
+  MAX_TEXT_LENGTH,
+  MAX_DISPLAY_SECONDS,
+  DEFAULT_DISPLAY_SECONDS,
+} = require('../protocol');
 const { clamp, parseNumber } = require('./util');
 const settings = require('./settings');
 
@@ -150,7 +156,14 @@ function updateProfile() {
   if (room) command({ type: 'profile', ...profile() });
 }
 
-function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
+// Durée envoyée par un ami. Une ancienne version n'envoie que imageSeconds,
+// qui ne valait que pour les images : ses vidéos gardent alors la durée max.
+function receivedSeconds({ seconds, imageSeconds }, ext) {
+  if (seconds !== undefined) return seconds;
+  return VIDEO_EXT.includes(ext) ? MAX_DISPLAY_SECONDS : imageSeconds;
+}
+
+function receiveMedia({ bytes, ext, text, seconds, imageSeconds, from }) {
   const s = settings.get();
   if (!room || !recvDir || !(bytes instanceof Uint8Array)) return;
   if (s.muted.includes(from?.id)) return;
@@ -164,7 +177,11 @@ function receiveMedia({ bytes, ext, text, imageSeconds, from }) {
     // Salon quitté pendant l'écriture.
     if (recvDir !== dir) return fs.rm(file, RM_OPTIONS, () => {});
     // Effacé dès qu'il a été affiché (ou ignoré si la file est pleine).
-    player.enqueue(file, { text, imageSeconds, onDone: () => fs.rm(file, RM_OPTIONS, () => {}) });
+    player.enqueue(file, {
+      text,
+      seconds: receivedSeconds({ seconds, imageSeconds }, safeExt),
+      onDone: () => fs.rm(file, RM_OPTIONS, () => {}),
+    });
   });
 }
 
@@ -183,11 +200,11 @@ async function transmit(file, requestId, targets, payload) {
 }
 
 // Envoie un média à chaque membre qui l'accepte. Le résultat est donné par ami.
-async function send(file, size, { text, imageSeconds }) {
+async function send(file, size, { text, seconds }) {
   if (!room) return { ok: false, error: "Tu n'es pas dans un salon." };
   const payload = {
     text: String(text ?? '').slice(0, MAX_TEXT_LENGTH),
-    imageSeconds: clamp(parseNumber(imageSeconds) ?? DEFAULT_IMAGE_SECONDS, 1, 30),
+    seconds: clamp(parseNumber(seconds) ?? DEFAULT_DISPLAY_SECONDS, 1, MAX_DISPLAY_SECONDS),
   };
   // Je vois aussi ce que j'envoie.
   const shownHere = player.enqueue(file, payload) !== null;

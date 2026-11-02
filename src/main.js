@@ -10,7 +10,7 @@ const {
   MAX_FILE_MB,
   MAX_IMAGE_PIXELS,
   MAX_VIDEO_PIXELS,
-  MAX_VIDEO_SECONDS,
+  MAX_DISPLAY_SECONDS,
 } = require('./protocol');
 const { clamp, parseNumber } = require('./main/util');
 const { checkFile } = require('./main/files');
@@ -31,7 +31,7 @@ const LIMITS = {
   maxFileMb: MAX_FILE_MB,
   maxImagePixels: MAX_IMAGE_PIXELS,
   maxVideoPixels: MAX_VIDEO_PIXELS,
-  maxVideoSeconds: MAX_VIDEO_SECONDS,
+  maxDisplaySeconds: MAX_DISPLAY_SECONDS,
 };
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -121,11 +121,11 @@ ipcMain.handle('media:pick', async (event) => {
 });
 
 // Test local : affiche le média uniquement chez moi.
-ipcMain.handle('media:send', (event, { text, imageSeconds }) => {
+ipcMain.handle('media:send', (event, { text, seconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
   const { error } = checkFile(selectedFile, settings.get().maxSizeMb);
   if (error) return { ok: false, error };
-  const position = player.enqueue(selectedFile, { text, imageSeconds });
+  const position = player.enqueue(selectedFile, { text, seconds });
   if (position === null) return { ok: false, error: "File d'attente pleine, réessaie dans un moment." };
   return { ok: true, position };
 });
@@ -150,11 +150,11 @@ ipcMain.handle('room:leave', (event) => {
 
 ipcMain.handle('room:get', (event) => (fromControl(event) ? room.get() : null));
 
-ipcMain.handle('room:send', (event, { text, imageSeconds }) => {
+ipcMain.handle('room:send', (event, { text, seconds }) => {
   if (!fromControl(event)) return { ok: false, error: 'Origine refusée.' };
   const { error, size } = checkFile(selectedFile, MAX_FILE_MB);
   if (error) return { ok: false, error };
-  return room.send(selectedFile, size, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), imageSeconds });
+  return room.send(selectedFile, size, { text: String(text ?? '').slice(0, MAX_TEXT_LENGTH), seconds });
 });
 
 ipcMain.handle('room:mute', (event, { id, muted }) => {

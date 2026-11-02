@@ -102,6 +102,7 @@ function join({ code, id, name, maxSizeMb, muted: mutedIds, relayUrls }) {
       bytes: data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
       ext: metadata?.ext,
       text: metadata?.text,
+      seconds: metadata?.seconds,
       imageSeconds: metadata?.imageSeconds,
       from: { id: from.id, name: from.name },
     });
@@ -133,7 +134,7 @@ function leave() {
 // Envoie à chaque ami séparément : un ami qui décroche n'empêche pas les autres de recevoir,
 // et l'envoyeur sait qui a reçu quoi.
 async function send(cmd) {
-  const { requestId, ext, text, imageSeconds } = cmd;
+  const { requestId, ext, text, seconds } = cmd;
   // Un Blob est lu morceau par morceau : trystero n'en fait pas une copie complète par ami.
   const blob = new Blob([cmd.bytes]);
   cmd.bytes = null;
@@ -158,7 +159,8 @@ async function send(cmd) {
     targets.map((peerId) =>
       media.send(blob, {
         target: peerId,
-        metadata: { ext, text, imageSeconds },
+        // imageSeconds : pour les amis qui ont encore l'ancienne version.
+        metadata: { ext, text, seconds, imageSeconds: seconds },
         onProgress: (ratio) => {
           progress.set(peerId, ratio);
           report();

@@ -40,7 +40,8 @@ function show(t, media) {
   // Toujours en texte brut : jamais interprété comme du HTML.
   caption.textContent = media.text;
   caption.hidden = !media.text;
-  timer = setTimeout(() => finish(t), media.kind === 'image' ? media.durationMs : media.maxVideoMs);
+  // Même durée pour une image et une vidéo : une vidéo plus longue est coupée.
+  timer = setTimeout(() => finish(t), media.durationMs);
 }
 
 window.overlay.onMedia((media) => {

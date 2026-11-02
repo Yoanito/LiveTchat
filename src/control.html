@@ -70,9 +70,10 @@
     <label>Texte (optionnel)
       <input type="text" id="text" maxlength="200" placeholder="Ton message">
     </label>
-    <label>Durée d'affichage d'une image (s)
-      <input type="number" id="imageSeconds" min="1" max="30" value="5">
+    <label>Durée d'affichage (s), image ou vidéo
+      <input type="number" id="seconds" min="1" max="30" value="5">
     </label>
+    <p class="help">Une vidéo plus longue est coupée à cette durée. 30 s au maximum.</p>
     <button id="sendRoom" class="primary" disabled>Envoyer au salon</button>
     <details>
       <summary>Tester seulement chez moi</summary>
